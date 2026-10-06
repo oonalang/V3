@@ -326,9 +326,7 @@ inline void RenderMemoryTab(float childWidth, float childHeight) {
     {
         const ChildFrame left = BeginContentChild("MEMORY HACKS##RUNTIME_MEMORY_LEFT", ImVec2(childWidth, childHeight));
         custom::Checkbox("Hitbox", &Config.ExtraMenu.Hit);
-        custom::SliderFloat("Hitbox Size", &Config.ExtraMenu.HitboxScale, 1.0f, 15.0f, "%.1fm");
-        custom::Checkbox("Headshot", &Config.ExtraMenu.Headshot);
-        custom::SliderFloat("Headshot Damage", &Config.ExtraMenu.HeadshotDamage, 1.0f, 10.0f, "%.1fx");
+        custom::SliderFloat("Hitbox Distance", &Config.ExtraMenu.HitboxScale, 1.0f, 15.0f, "%.1fm");
         custom::Checkbox("No Recoil", &Config.ExtraMenu.Recoil);
         custom::Checkbox("No Spread", &Config.ExtraMenu.Spread);
         custom::Checkbox("No Shake", &Config.ExtraMenu.Shake);

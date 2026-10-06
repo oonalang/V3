@@ -44,8 +44,6 @@ void SaveConfiguration(const std::string& filename) {
     config["ExtraMenu"]["Fire"] = Config.ExtraMenu.Fire;
     config["ExtraMenu"]["Hit"] = Config.ExtraMenu.Hit;
     config["ExtraMenu"]["HitboxScale"] = Config.ExtraMenu.HitboxScale;
-    config["ExtraMenu"]["Headshot"] = Config.ExtraMenu.Headshot;
-    config["ExtraMenu"]["HeadshotDamage"] = Config.ExtraMenu.HeadshotDamage;
     config["ExtraMenu"]["NoCrouch"] = Config.ExtraMenu.NoCrouch;
     config["ExtraMenu"]["Rpd"] = Config.ExtraMenu.Rpd;
     config["ExtraMenu"]["Parachute"] = Config.ExtraMenu.Parachute;
@@ -118,8 +116,6 @@ bool LoadConfiguration(const std::string& filename) {
             Config.ExtraMenu.Fire = config["ExtraMenu"]["Fire"].get<bool>();
             Config.ExtraMenu.Hit = config["ExtraMenu"]["Hit"].get<bool>();
             if (config["ExtraMenu"].contains("HitboxScale")) Config.ExtraMenu.HitboxScale = config["ExtraMenu"]["HitboxScale"].get<float>();
-            if (config["ExtraMenu"].contains("Headshot")) Config.ExtraMenu.Headshot = config["ExtraMenu"]["Headshot"].get<bool>();
-            if (config["ExtraMenu"].contains("HeadshotDamage")) Config.ExtraMenu.HeadshotDamage = config["ExtraMenu"]["HeadshotDamage"].get<float>();
             if (config["ExtraMenu"].contains("NoCrouch")) Config.ExtraMenu.NoCrouch = config["ExtraMenu"]["NoCrouch"].get<bool>();
             Config.ExtraMenu.Rpd = config["ExtraMenu"]["Rpd"].get<bool>();
             Config.ExtraMenu.Parachute = config["ExtraMenu"]["Parachute"].get<bool>();

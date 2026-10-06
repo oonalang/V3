@@ -63,8 +63,6 @@ void LoadConfig() {
         else if (key == "ExtraMenu.Rpd") Config.ExtraMenu.Rpd = (valueStr == "1");
         else if (key == "ExtraMenu.Hit") Config.ExtraMenu.Hit = (valueStr == "1");
         else if (key == "ExtraMenu.HitboxScale") Config.ExtraMenu.HitboxScale = std::stof(valueStr);
-        else if (key == "ExtraMenu.Headshot") Config.ExtraMenu.Headshot = (valueStr == "1");
-        else if (key == "ExtraMenu.HeadshotDamage") Config.ExtraMenu.HeadshotDamage = std::stof(valueStr);
         else if (key == "ExtraMenu.NoCrouch") Config.ExtraMenu.NoCrouch = (valueStr == "1");
         else if (key == "ExtraMenu.Fire") Config.ExtraMenu.Fire = (valueStr == "1");
         else if (key == "ExtraMenu.Parachute") Config.ExtraMenu.Parachute = (valueStr == "1");
@@ -113,8 +111,6 @@ void SaveConfig() {
     file << "ExtraMenu.Rpd " << Config.ExtraMenu.Rpd << "\n";
     file << "ExtraMenu.Hit " << Config.ExtraMenu.Hit << "\n";
     file << "ExtraMenu.HitboxScale " << Config.ExtraMenu.HitboxScale << "\n";
-    file << "ExtraMenu.Headshot " << Config.ExtraMenu.Headshot << "\n";
-    file << "ExtraMenu.HeadshotDamage " << Config.ExtraMenu.HeadshotDamage << "\n";
     file << "ExtraMenu.NoCrouch " << Config.ExtraMenu.NoCrouch << "\n";
     file << "ExtraMenu.Fire " << Config.ExtraMenu.Fire << "\n";
     file << "ExtraMenu.Parachute " << Config.ExtraMenu.Parachute << "\n";

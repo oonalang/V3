@@ -663,7 +663,7 @@ namespace custom
         if (size.x <= 0.0f) size.x = ImMax(content_avail.x + size.x, 4.0f * c::scale);
         if (size.y <= 0.0f) size.y = ImMax(content_avail.y + size.y, 4.0f * c::scale);
 
-        const float rounding = 7.0f * c::scale;
+        const float rounding = 3.0f * c::scale;
         const float cap_height = cap ? 34.0f * c::scale : 0.0f;
         const ImVec2 panel_min = parent_window->DC.CursorPos;
         const ImVec2 panel_max = panel_min + size;
@@ -671,11 +671,13 @@ namespace custom
         SetNextWindowSize(size - ImVec2(0.0f, cap_height));
 
         ImDrawList* draw = GetWindowDrawList();
-        draw->AddRectFilled(panel_min, panel_max, GetColorU32(c::child::background), rounding);
+        draw->AddRectFilled(panel_min, panel_max, IM_COL32(14, 14, 14, 255), rounding);
+        draw->AddRect(panel_min, panel_max, IM_COL32(22, 22, 22, 255), rounding, 0, 1.0f);
+        draw->AddRect(panel_min - ImVec2(1.0f, 1.0f), panel_max + ImVec2(1.0f, 1.0f), IM_COL32(5, 5, 5, 255), rounding + 1.0f, 0, 1.0f);
 
         if (cap) {
             const ImVec2 cap_max(panel_max.x, panel_min.y + cap_height);
-            draw->AddRectFilled(panel_min, cap_max, GetColorU32(c::child::cap), rounding, ImDrawFlags_RoundCornersTop);
+            draw->AddRectFilled(ImVec2(panel_min.x + 15.0f, cap_max.y - 1.0f), ImVec2(panel_max.x, cap_max.y), IM_COL32(22, 22, 22, 255));
 
             const char* name_end = name ? FindRenderedTextEnd(name) : nullptr;
             if (name != nullptr && name_end != name) {
@@ -698,7 +700,7 @@ namespace custom
                 }
                 draw->AddText(
                     panel_min + ImVec2(text_x, ImMax(6.0f * c::scale, (cap_height - title_size.y) * 0.5f - 2.0f * c::scale)),
-                    GetColorU32(c::accent),
+                    IM_COL32(235, 235, 235, 255),
                     name,
                     name_end
                 );
@@ -1218,87 +1220,33 @@ namespace custom
             MarkItemEdited(id);
         }
 
-        const ImVec4 target_background = *v ? AccentShade(0.12f, 0.98f) : hovered ? ImVec4(0.10f, 0.10f, 0.10f, 0.96f) : ImVec4(0.055f, 0.055f, 0.055f, 0.94f);
-        const ImVec4 target_text = *v ? c::text::text_active : hovered ? c::text::text_hov : c::text::text_active;
-        it_anim->second.background = ImLerp(it_anim->second.background, target_background, g.IO.DeltaTime * 10.0f);
-        it_anim->second.text = ImLerp(it_anim->second.text, target_text, g.IO.DeltaTime * 10.0f);
         it_anim->second.alpha_mark = ImLerp(it_anim->second.alpha_mark, *v ? 1.f : 0.f, g.IO.DeltaTime * 12.0f);
         it_anim->second.hover_t = ImLerp(it_anim->second.hover_t, hovered ? 1.0f : 0.0f, g.IO.DeltaTime * 10.0f);
-        it_anim->second.hold_t = ImLerp(it_anim->second.hold_t, held ? 1.0f : 0.0f, g.IO.DeltaTime * 18.0f);
-        const float target_box_scale = (*v ? 1.0f : 0.94f) + it_anim->second.hold_t * 0.05f + it_anim->second.hover_t * 0.02f;
-        it_anim->second.box_scale = ImLerp(it_anim->second.box_scale, target_box_scale, g.IO.DeltaTime * 14.0f);
+        if (hovered) SetMouseCursor(ImGuiMouseCursor_Hand);
 
-        const float row_overlay_alpha = 0.08f + it_anim->second.hover_t * 0.14f + it_anim->second.hold_t * 0.18f;
-        if (row_overlay_alpha > 0.01f) {
-            GetWindowDrawList()->AddRectFilled(
-                total_bb.Min,
-                total_bb.Max,
-                GetColorU32(c::elements::background_hovered, row_overlay_alpha),
-                6.0f * control_scale
-            );
-        }
+        const float pill_w = box_size;
+        const float pill_h = box_size * 0.6f;
+        const ImVec2 pill_min(total_bb.Max.x - pill_w, total_bb.Min.y + (height - pill_h) * 0.5f);
+        const ImVec2 pill_max = pill_min + ImVec2(pill_w, pill_h);
+        const float knob_margin = pill_h * 0.13f;
+        const float knob_radius = pill_h * 0.5f - knob_margin;
+        const float knob_travel = pill_w - 2.0f * (knob_margin + knob_radius);
+        const ImVec4 off_track = ImVec4(0.125f, 0.125f, 0.133f, 0.96f);
+        const ImVec4 on_track = ImVec4(c::accent.x, c::accent.y, c::accent.z, 0.98f);
+        const ImVec4 track_color = MixColor(off_track, on_track, it_anim->second.alpha_mark);
+        const ImVec4 off_label = ImVec4(0.243f, 0.243f, 0.259f, 1.0f);
+        const ImVec4 text_color = MixColor(off_label, c::text::text_active, it_anim->second.alpha_mark);
+        const ImVec4 knob_off = ImVec4(0.337f, 0.337f, 0.337f, 1.0f);
+        const ImVec4 knob_on = ImVec4(0.039f, 0.039f, 0.039f, 1.0f);
+        const ImVec4 knob_color = MixColor(knob_off, knob_on, it_anim->second.alpha_mark);
 
-        const ImVec2 box_center(total_bb.Max.x - box_size * 0.5f - 1.0f * control_scale, total_bb.Min.y + height * 0.5f);
-        const ImVec2 scaled_half(box_size * it_anim->second.box_scale * 0.5f, box_size * it_anim->second.box_scale * 0.5f);
-        const ImVec2 box_min(box_center.x - scaled_half.x, box_center.y - scaled_half.y);
-        const ImVec2 box_max(box_center.x + scaled_half.x, box_center.y + scaled_half.y);
-        const float rounding = 4.5f * control_scale;
-
-        if (*v || it_anim->second.alpha_mark > 0.01f) {
-            const ImVec2 glow_pad(2.0f * control_scale, 2.0f * control_scale);
-            GetWindowDrawList()->AddRectFilled(
-                box_min - glow_pad,
-                box_max + glow_pad,
-                GetColorU32(AccentShade(0.08f), (0.10f + it_anim->second.hover_t * 0.05f) * it_anim->second.alpha_mark),
-                rounding + 2.0f * control_scale
-            );
-        }
-
-        const ImVec4 off_left = ImVec4(0.16f, 0.16f, 0.18f, 0.82f);
-        const ImVec4 off_right = ImVec4(0.055f, 0.055f, 0.055f, 0.90f);
-        const ImVec4 on_left = AccentLift(0.14f, 0.94f);
-        const ImVec4 on_right = AccentShade(0.72f, 0.96f);
-        const ImVec4 left_fill = MixColor(off_left, on_left, it_anim->second.alpha_mark);
-        const ImVec4 right_fill = MixColor(off_right, on_right, it_anim->second.alpha_mark);
-        ImDrawList* draw_list = GetWindowDrawList();
-        const int gradient_vtx_start = draw_list->VtxBuffer.Size;
-        draw_list->AddRectFilled(box_min, box_max, GetColorU32(left_fill), rounding);
-        ShadeVertsLinearColorGradientKeepAlpha(
-            draw_list,
-            gradient_vtx_start,
-            draw_list->VtxBuffer.Size,
-            box_min,
-            ImVec2(box_max.x, box_min.y),
-            GetColorU32(left_fill),
-            GetColorU32(right_fill)
-        );
-        draw_list->AddRect(
-            box_min,
-            box_max,
-            GetColorU32(*v ? WithAlpha(AccentLift(0.08f), 0.34f + it_anim->second.hover_t * 0.08f) : WithAlpha(c::widget::outlinecolor, 0.58f + it_anim->second.hover_t * 0.08f)),
-            rounding,
-            0,
-            1.0f * control_scale
-        );
-        if (*v || it_anim->second.alpha_mark > 0.01f) {
-            const float box_w = box_max.x - box_min.x;
-            const float box_h = box_max.y - box_min.y;
-            const float reveal_t = ImSaturate((it_anim->second.alpha_mark - 0.06f) / 0.94f);
-            const float first_t = ImSaturate(reveal_t / 0.48f);
-            const float second_t = ImSaturate((reveal_t - 0.48f) / 0.52f);
-            const float mark_drop = (1.0f - reveal_t) * 2.0f * control_scale;
-            const ImVec2 p1(box_min.x + box_w * 0.24f, box_min.y + box_h * 0.55f + mark_drop);
-            const ImVec2 p2(box_min.x + box_w * 0.43f, box_min.y + box_h * 0.73f + mark_drop * 0.4f);
-            const ImVec2 p3(box_min.x + box_w * 0.77f, box_min.y + box_h * 0.28f + mark_drop * 0.1f);
-            if (first_t > 0.0f)
-                GetWindowDrawList()->AddLine(p1, ImLerp(p1, p2, first_t), GetColorU32(c::checkbox::mark, it_anim->second.alpha_mark), 1.55f * control_scale);
-            if (second_t > 0.0f)
-                GetWindowDrawList()->AddLine(p2, ImLerp(p2, p3, second_t), GetColorU32(c::checkbox::mark, it_anim->second.alpha_mark), 1.55f * control_scale);
-        }
+        GetWindowDrawList()->AddRectFilled(pill_min, pill_max, GetColorU32(track_color), pill_h * 0.5f);
+        const float knob_cx = pill_min.x + knob_margin + knob_radius + knob_travel * it_anim->second.alpha_mark;
+        GetWindowDrawList()->AddCircleFilled(ImVec2(knob_cx, pill_min.y + pill_h * 0.5f), knob_radius, GetColorU32(knob_color), 24);
 
         GetWindowDrawList()->AddText(
             pos + ImVec2(0.0f, (height - label_size.y) * 0.5f),
-            GetColorU32(it_anim->second.text),
+            GetColorU32(text_color),
             label,
             label_end
         );
@@ -2673,46 +2621,32 @@ namespace custom
         it_anim->second.slow = ImLerp(it_anim->second.slow, fill_target, g.IO.DeltaTime * 18.0f);
 
         const float header_y = total_bb.Min.y + (header_height - label_size.y) * 0.5f;
-        GetWindowDrawList()->AddText(ImVec2(total_bb.Min.x, header_y), GetColorU32(it_anim->second.text), label, label_end);
+        GetWindowDrawList()->AddText(ImVec2(total_bb.Min.x, header_y), IM_COL32(205, 205, 210, 255), label, label_end);
         GetWindowDrawList()->AddText(
             ImVec2(total_bb.Max.x - value_size.x, total_bb.Min.y + (header_height - value_size.y) * 0.5f),
-            GetColorU32(WithAlpha(c::text::text_active, it_anim->second.value_alpha)),
+            IM_COL32(88, 88, 94, 255),
             value_buf
         );
 
         const float track_thickness = ImLerp(3.0f * control_scale, 4.0f * control_scale, it_anim->second.active_t * 0.9f + it_anim->second.hover_t * 0.35f);
-        const float knob_half_width = ImLerp(2.5f * control_scale, 3.4f * control_scale, it_anim->second.active_t);
-        const float knob_half_height = ImLerp(7.0f * control_scale, 8.4f * control_scale, it_anim->second.active_t * 0.9f + it_anim->second.hover_t * 0.2f);
         const ImVec2 track_start(slider_bb.Min.x + track_margin, frame_bb.Min.y + box_height * 0.5f);
         const ImVec2 track_end(slider_bb.Max.x - track_margin, track_start.y);
         GetWindowDrawList()->AddRectFilled(
             ImVec2(track_start.x, track_start.y - track_thickness * 0.5f),
             ImVec2(track_end.x, track_start.y + track_thickness * 0.5f),
-            GetColorU32(WithAlpha(c::widget::outlinecolor, 0.45f + it_anim->second.hover_t * 0.12f)),
+            IM_COL32(24, 24, 24, 255),
             3.0f * control_scale
         );
         GetWindowDrawList()->AddRectFilledMultiColor(
             ImVec2(track_start.x, track_start.y - track_thickness * 0.5f),
             ImVec2(track_start.x + it_anim->second.slow, track_start.y + track_thickness * 0.5f),
-            GetColorU32(AccentLift(0.18f)),
-            GetColorU32(c::accent),
-            GetColorU32(c::accent),
-            GetColorU32(AccentLift(0.18f))
+            GetColorU32(AccentLift(0.04f)),
+            GetColorU32(AccentShade(0.09f)),
+            GetColorU32(AccentShade(0.09f)),
+            GetColorU32(AccentLift(0.04f))
         );
         const ImVec2 knob_center(track_start.x + it_anim->second.slow, track_start.y);
-        const ImVec2 knob_min(knob_center.x - knob_half_width, knob_center.y - knob_half_height);
-        const ImVec2 knob_max(knob_center.x + knob_half_width, knob_center.y + knob_half_height);
-        if (it_anim->second.hover_t > 0.01f || it_anim->second.active_t > 0.01f) {
-            GetWindowDrawList()->AddRectFilled(
-                knob_min - ImVec2((1.5f + it_anim->second.active_t) * control_scale, (1.5f + it_anim->second.active_t) * control_scale),
-                knob_max + ImVec2((1.5f + it_anim->second.active_t) * control_scale, (1.5f + it_anim->second.active_t) * control_scale),
-                GetColorU32(AccentShade(0.12f), 0.10f + it_anim->second.active_t * 0.08f + it_anim->second.hover_t * 0.03f),
-                5.0f * control_scale
-            );
-        }
-        const ImVec4 knob_fill = MixColor(c::text::text_active, AccentLift(0.10f), it_anim->second.active_t * 0.45f + it_anim->second.hover_t * 0.12f);
-        GetWindowDrawList()->AddRectFilled(knob_min, knob_max, GetColorU32(knob_fill), 3.5f * control_scale);
-        GetWindowDrawList()->AddRect(knob_min, knob_max, GetColorU32(WithAlpha(c::widget::outlinecolor, 0.72f + it_anim->second.active_t * 0.16f)), 3.5f * control_scale, 0, 1.0f * control_scale);
+        GetWindowDrawList()->AddCircleFilled(knob_center, 7.0f, IM_COL32(44, 44, 44, 255), 24);
 
         return value_changed;
     }

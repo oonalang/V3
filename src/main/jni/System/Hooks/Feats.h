@@ -247,9 +247,8 @@ inline bool SingleLineCheckPhysics(void* instance, int hitType, void* hitTarget,
 inline void* (*orig_CalcDamageInfoInstantHit)(void* instance, void** inImpactInfo, unsigned char inFireMode, void* sourcePos, int clientTime, int ammoCount, float punchX, float punchY, float spreadX, float spreadY, float fightOffSpeed, float fightOffUp) = nullptr;
 inline void* CalcDamageInfoInstantHit(void* instance, void** inImpactInfo, unsigned char inFireMode, void* sourcePos, int clientTime, int ammoCount, float punchX, float punchY, float spreadX, float spreadY, float fightOffSpeed, float fightOffUp) {
     void* damageInfo = orig_CalcDamageInfoInstantHit(instance, inImpactInfo, inFireMode, sourcePos, clientTime, ammoCount, punchX, punchY, spreadX, spreadY, fightOffSpeed, fightOffUp);
-    if (Config.ExtraMenu.Headshot && damageInfo != NULL) {
+    if (Config.ExtraMenu.Hit && damageInfo != NULL) {
         *(int*)((uintptr_t)damageInfo + Class_DamageInfo_m_HitGroup) = EHitGroup_Head;
-        *(float*)((uintptr_t)damageInfo + Class_DamageInfo_m_Damage) *= Config.ExtraMenu.HeadshotDamage;
     }
     return damageInfo;
 }

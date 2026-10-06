@@ -1603,13 +1603,9 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                         const ImVec2 runtimeWindowPos = ImGui::GetWindowPos();
                         ImDrawList *runtimeDrawList = ImGui::GetWindowDrawList();
 
-                        // ELECTRIC BORDER
-                        ModernUI::RenderMenuEdgeLightning(
-                            ImGui::GetBackgroundDrawList(),
-                            runtimeDrawList,
-                            runtimeWindowPos,
-                            ImVec2(runtimeWindowPos.x + runtimeWindowSize.x,
-                                   runtimeWindowPos.y + runtimeWindowSize.y));
+                        runtimeDrawList->AddRectFilled(runtimeWindowPos, ImVec2(runtimeWindowPos.x + runtimeWindowSize.x, runtimeWindowPos.y + runtimeWindowSize.y), IM_COL32(6, 6, 6, 255), 5.0f);
+                        runtimeDrawList->AddRect(runtimeWindowPos, ImVec2(runtimeWindowPos.x + runtimeWindowSize.x, runtimeWindowPos.y + runtimeWindowSize.y), IM_COL32(45, 45, 45, 120), 5.0f, 0, 1.0f);
+                        runtimeDrawList->AddRect(runtimeWindowPos + ImVec2(1.0f, 1.0f), ImVec2(runtimeWindowPos.x + runtimeWindowSize.x - 1.0f, runtimeWindowPos.y + runtimeWindowSize.y - 1.0f), IM_COL32(10, 10, 10, 120), 4.0f, 0, 1.0f);
 
                         const float outerPad = 14.0f;
                         const float layoutGap = 8.0f;
@@ -1637,11 +1633,11 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                         runtimeState.page = ImClamp(runtimeState.page, 1, 6);
                         runtimeState.activeTab = ImClamp(runtimeState.activeTab, 1, 6);
 
-                        runtimeDrawList->AddRectFilled(headerMin, headerMax, IM_COL32(14, 14, 14, 250), 11.0f);
-                        runtimeDrawList->AddRect(headerMin, headerMax, IM_COL32(45, 45, 45, 220), 11.0f, 0, 1.0f);
+                        runtimeDrawList->AddRectFilled(headerMin, headerMax, IM_COL32(16, 16, 16, 255), 4.0f);
+                        runtimeDrawList->AddRect(headerMin, headerMax, IM_COL32(22, 22, 22, 255), 4.0f, 0, 1.0f);
 
                         const ImVec2 flameCenter(headerMin.x + 28.0f, headerMin.y + headerHeight * 0.5f);
-                        runtimeDrawList->AddCircleFilled(flameCenter, 18.0f, main_runtime_theme::GetAccentTintU32(0.25f, 0.55f), 28);
+                        runtimeDrawList->AddCircleFilled(flameCenter, 18.0f, IM_COL32(24, 24, 24, 255), 28);
                         {
                             ImFont *iconFont = custom::shell::GetIconFont();
                             const char *logoIcon = ICON_FA_FIRE;
@@ -1663,31 +1659,6 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                         const ImVec2 subtitlePos(headerMin.x + 57.0f, headerMin.y + 38.0f);
                         runtimeDrawList->AddText(runtimeTitleFont, 10.0f, subtitlePos, IM_COL32(142, 142, 148, 235), currentCat);
 
-                        // ===== COLOR SLIDER =====
-                        const ImVec2 trackMin(headerMin.x + headerMainWidth * 0.42f, headerMin.y + 28.0f);
-                        const ImVec2 trackMax(headerMax.x - 260.0f, trackMin.y + 8.0f);
-                        ImGui::SetCursorScreenPos(ImVec2(trackMin.x - 4.0f, trackMin.y - 7.0f));
-                        ImGui::InvisibleButton("##main_runtime_menu_color_slider_new", ImVec2((trackMax.x - trackMin.x) + 8.0f, 22.0f));
-                        if (ImGui::IsItemActive()) {
-                            main_runtime_theme::g_menuHue = custom::shell::Normalize(ImGui::GetIO().MousePos.x, trackMin.x, trackMax.x);
-                            main_runtime_theme::ApplyAccentFromHue();
-                            c::UpdateTheme(runtimeState.dark, menu, ImGui::GetIO().DeltaTime);
-                            main_runtime_theme::ApplyThemeState();
-                        }
-                        const float segments = 8.0f;
-                        const float segmentWidth = (trackMax.x - trackMin.x) / segments;
-                        for (int i = 0; i < (int)segments; ++i) {
-                            float r0, g0, b0, r1, g1, b1;
-                            ImGui::ColorConvertHSVtoRGB((float)i / segments, 0.90f, 1.0f, r0, g0, b0);
-                            ImGui::ColorConvertHSVtoRGB((float)(i + 1) / segments, 0.90f, 1.0f, r1, g1, b1);
-                            const ImVec2 a(trackMin.x + segmentWidth * i, trackMin.y);
-                            const ImVec2 b((i == (int)segments - 1) ? trackMax.x : a.x + segmentWidth + 1.0f, trackMax.y);
-                            runtimeDrawList->AddRectFilledMultiColor(a, b, ImGui::ColorConvertFloat4ToU32(ImVec4(r0,g0,b0,1)), ImGui::ColorConvertFloat4ToU32(ImVec4(r1,g1,b1,1)), ImGui::ColorConvertFloat4ToU32(ImVec4(r1,g1,b1,1)), ImGui::ColorConvertFloat4ToU32(ImVec4(r0,g0,b0,1)));
-                        }
-                        const float hueX = trackMin.x + ImClamp(main_runtime_theme::g_menuHue, 0.0f, 1.0f) * (trackMax.x - trackMin.x);
-                        runtimeDrawList->AddCircleFilled(ImVec2(hueX, trackMin.y + 4.0f), 5.0f, IM_COL32(245,245,250,255), 20);
-                        runtimeDrawList->AddCircle(ImVec2(hueX, trackMin.y + 4.0f), 6.5f, main_runtime_theme::GetAccentU32(), 20, 1.5f);
-
                         // ============================================
                         // HEADER BUTTONS — BACK / SAVE / HIDE
                         // ============================================
@@ -1699,16 +1670,16 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                         const float hGroupW = hBtnW * 3.0f + hBtnGap * 2.0f;
                         const float hGroupStartX = headerMax.x - hGroupW - 4.0f;
 
-                        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 8.0f);
+                        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
                         ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
 
                         // --- BACK TO PIZZA ---
                         ImGui::SetCursorScreenPos(ImVec2(hGroupStartX, hBtnY));
-                        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.086f, 0.086f, 0.086f, 0.95f));
-                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.22f, 0.20f, 0.42f, 1.00f));
-                        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.32f, 0.29f, 0.60f, 1.00f));
-                        ImGui::PushStyleColor(ImGuiCol_Border,        ImVec4(0.176f, 0.176f, 0.176f, 0.90f));
-                        ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.92f, 0.92f, 0.92f, 1.00f));
+                        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.094f, 0.094f, 0.094f, 0.95f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.122f, 0.122f, 0.122f, 1.00f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.176f, 0.176f, 0.176f, 1.00f));
+                        ImGui::PushStyleColor(ImGuiCol_Border,        ImVec4(0.141f, 0.141f, 0.141f, 1.00f));
+                        ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.804f, 0.804f, 0.824f, 1.00f));
                         if (ImGui::Button("<- BACK", ImVec2(hBtnW, hBtnH))) {
                             g_ShowRadialMenu = true;
                         }
@@ -1718,11 +1689,11 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                         ImGui::SameLine(0.0f, hBtnGap);
 
                         // --- SAVE ---
-                        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.086f, 0.086f, 0.086f, 0.95f));
-                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.22f, 0.20f, 0.42f, 1.00f));
-                        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.32f, 0.29f, 0.60f, 1.00f));
-                        ImGui::PushStyleColor(ImGuiCol_Border,        ImVec4(0.176f, 0.176f, 0.176f, 0.90f));
-                        ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.92f, 0.92f, 0.92f, 1.00f));
+                        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.094f, 0.094f, 0.094f, 0.95f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.122f, 0.122f, 0.122f, 1.00f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.176f, 0.176f, 0.176f, 1.00f));
+                        ImGui::PushStyleColor(ImGuiCol_Border,        ImVec4(0.141f, 0.141f, 0.141f, 1.00f));
+                        ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.804f, 0.804f, 0.824f, 1.00f));
                         if (ImGui::Button("SAVE", ImVec2(hBtnW, hBtnH))) {
                             SaveConfiguration("astavex_config");
                             SaveConfig();
@@ -1733,11 +1704,11 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                         ImGui::SameLine(0.0f, hBtnGap);
 
                         // --- HIDE ---
-                        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.086f, 0.086f, 0.086f, 0.95f));
-                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.22f, 0.20f, 0.42f, 1.00f));
-                        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.32f, 0.29f, 0.60f, 1.00f));
-                        ImGui::PushStyleColor(ImGuiCol_Border,        ImVec4(0.176f, 0.176f, 0.176f, 0.90f));
-                        ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.92f, 0.92f, 0.92f, 1.00f));
+                        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.094f, 0.094f, 0.094f, 0.95f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.122f, 0.122f, 0.122f, 1.00f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.176f, 0.176f, 0.176f, 1.00f));
+                        ImGui::PushStyleColor(ImGuiCol_Border,        ImVec4(0.141f, 0.141f, 0.141f, 1.00f));
+                        ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.804f, 0.804f, 0.824f, 1.00f));
                         if (ImGui::Button("HIDE", ImVec2(hBtnW, hBtnH))) {
                             windowCollapsed = true;
                             isMenuVisible = false;
@@ -1755,7 +1726,7 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                         runtimeState.tabAlpha = ImClamp(runtimeState.tabAlpha + (4.0f * ImGui::GetIO().DeltaTime * (runtimeState.page == runtimeState.activeTab ? 1.0f : -1.0f)), 0.0f, 1.0f);
                         if (runtimeState.tabAlpha == 0.0f && runtimeState.tabAdd == 0.0f) runtimeState.activeTab = runtimeState.page;
 
-                        runtimeDrawList->AddRectFilled(hostMin, hostMax, ImGui::GetColorU32(main_runtime_theme::GetSidebarShellBackgroundColor()), 11.0f);
+                        runtimeDrawList->AddRectFilled(hostMin, hostMax, IM_COL32(6, 6, 6, 255), 4.0f);
 
                         ImGui::SetCursorScreenPos(contentInnerMin);
                         ImGui::BeginChild("##RuntimeContentHost", contentInnerSize, false, ImGuiWindowFlags_NoBackground);
@@ -1862,9 +1833,7 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                                 {
                                     const ChildFrame left = BeginContentChild("MEMORY HACKS", ImVec2(childWidth, childHeight));
                                     custom::Checkbox("Hitbox", &Config.ExtraMenu.Hit);
-                                    custom::SliderFloat("Hitbox Size", &Config.ExtraMenu.HitboxScale, 1.0f, 15.0f, "%.1fm");
-                                    custom::Checkbox("Headshot", &Config.ExtraMenu.Headshot);
-                                    custom::SliderFloat("Headshot Damage", &Config.ExtraMenu.HeadshotDamage, 1.0f, 10.0f, "%.1fx");
+                                    custom::SliderFloat("Hitbox Distance", &Config.ExtraMenu.HitboxScale, 1.0f, 15.0f, "%.1fm");
                                     custom::Checkbox("No Recoil", &Config.ExtraMenu.Recoil);
                                     custom::Checkbox("No Spread", &Config.ExtraMenu.Spread);
                                     custom::Checkbox("No Shake", &Config.ExtraMenu.Shake);

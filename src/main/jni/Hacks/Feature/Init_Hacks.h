@@ -211,8 +211,6 @@ sColorsESPBOT sColorsESPBOT{0};
         bool Flash;
         bool Hit;
         float HitboxScale = 3.0f;
-        bool Headshot = false;
-        float HeadshotDamage = 2.0f;
         bool Rpd;
         bool Parachute;
 		bool WallHack;
