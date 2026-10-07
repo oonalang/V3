@@ -248,7 +248,7 @@ inline void* (*orig_CalcDamageInfoInstantHit)(void* instance, void** inImpactInf
 inline void* CalcDamageInfoInstantHit(void* instance, void** inImpactInfo, unsigned char inFireMode, void* sourcePos, int clientTime, int ammoCount, float punchX, float punchY, float spreadX, float spreadY, float fightOffSpeed, float fightOffUp) {
     void* damageInfo = orig_CalcDamageInfoInstantHit(instance, inImpactInfo, inFireMode, sourcePos, clientTime, ammoCount, punchX, punchY, spreadX, spreadY, fightOffSpeed, fightOffUp);
     if (Config.ExtraMenu.Hit && damageInfo != NULL) {
-        *(int*)((uintptr_t)damageInfo + Class_DamageInfo_m_HitGroup) = (EHitGroup)Config.Aim.HitGroup;
+        *(int*)((uintptr_t)damageInfo + Class_DamageInfo_m_HitGroup) = EHitGroup_Head;
     }
     return damageInfo;
 }
