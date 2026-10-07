@@ -90,7 +90,22 @@ std::string GetBaseWeaponName(const std::string& fullName) {
 }
 
 namespace ImGui {
-bool AstralInput(const char* label, char* buf, size_t buf_size, const ImVec2& size = ImVec2(0, 0)) {
+
+// Optional color override for AstralInput (dmalogin login look). When nullptr,
+// the legacy c:: palette is used so existing call sites are unaffected.
+struct AstralInputStyle {
+    ImVec4 bg;
+    ImVec4 bgHovered;
+    ImVec4 bgActive;
+    ImVec4 border;
+    ImVec4 borderActive;
+    ImVec4 hint;
+    ImVec4 text;
+    ImVec4 accent;
+    float  rounding;
+};
+
+bool AstralInput(const char* label, char* buf, size_t buf_size, const ImVec2& size = ImVec2(0, 0), const AstralInputStyle* sty = nullptr) {
     ImGuiWindow* window = GetCurrentWindow();
     if (window->SkipItems)
         return false;
@@ -135,13 +150,19 @@ bool AstralInput(const char* label, char* buf, size_t buf_size, const ImVec2& si
         cursorVisible = true;
     }
 
-    ImU32 bgColor = GetColorU32(isActive ? c::elements::background_hovered : hovered ? c::button::background_hovered : c::widget::background);
-    ImU32 borderColor = GetColorU32(isActive ? c::accent : c::button::outline);
+    const ImU32 bgColor = sty
+        ? GetColorU32(isActive ? sty->bgActive : hovered ? sty->bgHovered : sty->bg)
+        : GetColorU32(isActive ? c::elements::background_hovered : hovered ? c::button::background_hovered : c::widget::background);
+    const ImU32 borderColor = sty
+        ? GetColorU32(isActive ? sty->borderActive : sty->border)
+        : GetColorU32(isActive ? c::accent : c::button::outline);
+    const float inputRounding = sty ? sty->rounding : 4.0f;
+    const ImVec4 textColor = sty ? sty->text : c::text::text_active;
 
     ImDrawList* draw_list = window->DrawList;
 
-    draw_list->AddRectFilled(bb.Min, bb.Max, bgColor, 4.0f);
-    draw_list->AddRect(bb.Min, bb.Max, borderColor, 4.0f, 0, 1.0f);
+    draw_list->AddRectFilled(bb.Min, bb.Max, bgColor, inputRounding);
+    draw_list->AddRect(bb.Min, bb.Max, borderColor, inputRounding, 0, 1.0f);
 
     std::string text = buf;
     ImVec2 textPos = ImVec2(bb.Min.x + 15.0f, bb.Min.y + (inputSize.y - GetFontSize()) * 0.5f);
@@ -149,11 +170,11 @@ bool AstralInput(const char* label, char* buf, size_t buf_size, const ImVec2& si
     PushClipRect(ImVec2(bb.Min.x + 10.0f, bb.Min.y), ImVec2(bb.Max.x - 10.0f, bb.Max.y), true);
 
     if (text.empty() && !isActive) {
-        ImVec4 hintColor = c::text::text_hov;
-        hintColor.w *= 0.70f;
+        ImVec4 hintColor = sty ? sty->hint : c::text::text_hov;
+        if (!sty) hintColor.w *= 0.70f;
         draw_list->AddText(textPos, GetColorU32(hintColor), "Type here...");
     } else {
-        draw_list->AddText(textPos, GetColorU32(c::text::text_active), text.c_str());
+        draw_list->AddText(textPos, GetColorU32(textColor), text.c_str());
 
         if (isActive && cursorVisible) {
             ImVec2 textSize = CalcTextSize(text.c_str());
@@ -161,7 +182,7 @@ bool AstralInput(const char* label, char* buf, size_t buf_size, const ImVec2& si
             float cursorY1 = textPos.y;
             float cursorY2 = textPos.y + GetFontSize();
             draw_list->AddLine(ImVec2(cursorX, cursorY1), ImVec2(cursorX, cursorY2),
-                               GetColorU32(c::text::text_active), 2.0f);
+                               GetColorU32(textColor), 2.0f);
         }
     }
 
@@ -180,7 +201,7 @@ bool AstralInput(const char* label, char* buf, size_t buf_size, const ImVec2& si
             alpha = animProgress * 2.0f;
         }
 
-        ImVec4 lineColorF = c::accent;
+        ImVec4 lineColorF = sty ? sty->accent : c::accent;
         lineColorF.w = alpha;
         ImU32 lineColor = GetColorU32(lineColorF);
         draw_list->AddLine(ImVec2(lineStart, bb.Max.y - 2.0f),

@@ -1436,6 +1436,17 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
 
                 ModernUI::RenderMenuEdgeLightning(draw, draw, pos, ImVec2(pos.x + 640.0f, pos.y + 460.0f));
 
+                // dmalogin palette (framework/settings/colors.h) — login only; menu keeps the ECHO accent
+                const ImU32 dmAccent      = IM_COL32(189, 189, 255, 255);   // c->accent
+                const ImU32 dmAccentDim   = IM_COL32(156, 156, 255, 255);   // c->g_accent
+                const ImU32 dmFrame       = IM_COL32(25, 25, 36, 255);      // c->frame_layout
+                const ImU32 dmFrameBorder = IM_COL32(39, 39, 58, 255);      // c->frame_border
+                const ImU32 dmTextMut     = IM_COL32(60, 60, 83, 255);      // c->text_inactive
+                const ImU32 dmWhite       = IM_COL32(255, 255, 255, 255);
+                auto dmTint = [](float s, float a) -> ImU32 {
+                    return IM_COL32((int)(189.0f * s), (int)(189.0f * s), (int)(255.0f * s), (int)(a * 255.0f));
+                };
+
                 const ImVec2 login_size = ImVec2(640, 460);
                 const float outerRounding = 10.0f;
                 const float innerInset = 10.0f;
@@ -1444,9 +1455,9 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                 const ImVec2 innerMin = pos + ImVec2(innerInset, innerInset);
                 const ImVec2 innerMax = pos + login_size - ImVec2(innerInset, innerInset);
                 draw->AddRectFilled(pos, pos + login_size, IM_COL32(0, 0, 0, 110), outerRounding);
-                draw->AddRectFilledMultiColor(pos, ImVec2(pos.x + login_size.x, pos.y + outerGlowHeight), main_runtime_theme::GetAccentTintU32(0.22f, 0.10f), main_runtime_theme::GetAccentTintU32(0.16f, 0.05f), IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0));
+                draw->AddRectFilledMultiColor(pos, ImVec2(pos.x + login_size.x, pos.y + outerGlowHeight), dmTint(0.22f, 0.10f), dmTint(0.16f, 0.05f), IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0));
                 draw->AddRectFilled(innerMin, innerMax, IM_COL32(0, 0, 0, 188), innerRounding);
-                draw->AddRectFilledMultiColor(innerMin, ImVec2(innerMax.x, innerMin.y + (innerMax.y - innerMin.y) * 0.44f), main_runtime_theme::GetAccentTintU32(0.22f, 0.11f), main_runtime_theme::GetAccentTintU32(0.16f, 0.06f), IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0));
+                draw->AddRectFilledMultiColor(innerMin, ImVec2(innerMax.x, innerMin.y + (innerMax.y - innerMin.y) * 0.44f), dmTint(0.22f, 0.11f), dmTint(0.16f, 0.06f), IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0));
 
                 auto drawLoginButton = [&](const char* label, float y, float width, bool primary) -> bool {
                     const float buttonX = (640.0f - width) * 0.5f;
@@ -1462,12 +1473,12 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                     const ImVec2 buttonMax = ImGui::GetItemRectMax();
                     const bool useAccent = primary ? !hovered : hovered;
                     if (useAccent) {
-                        draw->AddRectFilledMultiColor(buttonMin, buttonMax, main_runtime_theme::GetAccentU32(1.0f),
-                            main_runtime_theme::GetAccentTintU32(0.82f), main_runtime_theme::GetAccentTintU32(0.82f),
-                            main_runtime_theme::GetAccentU32(1.0f), 8.0f);
+                        draw->AddRectFilledMultiColor(buttonMin, buttonMax, dmAccent,
+                            dmAccentDim, dmAccentDim,
+                            dmAccent, 8.0f);
                     } else {
-                        draw->AddRectFilled(buttonMin, buttonMax, ImGui::GetColorU32(c::button::background), 8.0f);
-                        draw->AddRect(buttonMin, buttonMax, ImGui::GetColorU32(c::button::outline), 8.0f, 0, 1.0f);
+                        draw->AddRectFilled(buttonMin, buttonMax, dmFrame, 8.0f);
+                        draw->AddRect(buttonMin, buttonMax, dmFrameBorder, 8.0f, 0, 1.0f);
                     }
 
                     const float labelSizeUse = labelSize > 0.0f ? labelSize : 16.0f;
@@ -1476,7 +1487,7 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                         : ImGui::CalcTextSize(label);
                     const ImVec2 labelTextPos = ImVec2((buttonMin.x + buttonMax.x - labelTextSize.x) * 0.5f,
                         (buttonMin.y + buttonMax.y - labelTextSize.y) * 0.5f);
-                    const ImU32 labelColor = useAccent ? IM_COL32(10, 10, 14, 255) : ImGui::GetColorU32(c::text::text_active);
+                    const ImU32 labelColor = useAccent ? IM_COL32(0, 0, 0, 255) : dmWhite;
                     if (labelFont != nullptr) draw->AddText(labelFont, labelSizeUse, labelTextPos, labelColor, label);
                     else draw->AddText(labelTextPos, labelColor, label);
 
@@ -1488,16 +1499,16 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                     const float titleSize = 34.0f;
                     const float titleX = pos.x + 80.0f;
                     const float titleY = pos.y + 56.0f;
-                    if (F50) draw->AddText(F50, titleSize, ImVec2(titleX, titleY), ImGui::GetColorU32(c::text::text_active), titleText);
-                    else draw->AddText(ImVec2(titleX, titleY), ImGui::GetColorU32(c::text::text_active), titleText);
+                    if (F50) draw->AddText(F50, titleSize, ImVec2(titleX, titleY), dmWhite, titleText);
+                    else draw->AddText(ImVec2(titleX, titleY), dmWhite, titleText);
                 }
 
                 {
                     const char* helperLine1 = "Authorize through your license key where";
                     const char* helperLine2 = "your subscription is located.";
                     const float helperX = pos.x + 30.0f;
-                    draw->AddText(ImVec2(helperX, pos.y + 106.0f), ImGui::GetColorU32(c::text::text), helperLine1);
-                    draw->AddText(ImVec2(helperX, pos.y + 128.0f), ImGui::GetColorU32(c::text::text), helperLine2);
+                    draw->AddText(ImVec2(helperX, pos.y + 106.0f), dmTextMut, helperLine1);
+                    draw->AddText(ImVec2(helperX, pos.y + 128.0f), dmTextMut, helperLine2);
                 }
 
                 {
@@ -1508,7 +1519,7 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                     const ImVec2 orSize = ImGui::CalcTextSize(orLabel);
                     const float sepMidX = (sepLeft + sepRight) * 0.5f;
                     const float sepGap = orSize.x * 0.5f + 14.0f;
-                    const ImU32 sepColor = ImGui::GetColorU32(c::text::text);
+                    const ImU32 sepColor = dmTextMut;
                     draw->AddLine(ImVec2(sepLeft, sepMidY), ImVec2(sepMidX - sepGap, sepMidY), sepColor, 1.0f);
                     draw->AddLine(ImVec2(sepMidX + sepGap, sepMidY), ImVec2(sepRight, sepMidY), sepColor, 1.0f);
                     draw->AddText(ImVec2(sepMidX - orSize.x * 0.5f, sepMidY - orSize.y * 0.5f), sepColor, orLabel);
@@ -1518,7 +1529,18 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                 const float inputHeight = 56.0f;
                 const float inputX = (login_size.x - inputWidth) * 0.5f;
                 ImGui::SetCursorPos(ImVec2(inputX, 314.0f));
-                ImGui::AstralInput("##key_login", s, sizeof(s), ImVec2(inputWidth, inputHeight));
+                static const ImGui::AstralInputStyle loginInputStyle = {
+                    ImVec4(25.0f/255.0f, 25.0f/255.0f, 36.0f/255.0f, 1.0f),     // bg       (frame_layout)
+                    ImVec4(25.0f/255.0f, 25.0f/255.0f, 36.0f/255.0f, 1.0f),     // bgHovered
+                    ImVec4(25.0f/255.0f, 25.0f/255.0f, 36.0f/255.0f, 1.0f),     // bgActive
+                    ImVec4(39.0f/255.0f, 39.0f/255.0f, 58.0f/255.0f, 1.0f),     // border   (frame_border)
+                    ImVec4(39.0f/255.0f, 39.0f/255.0f, 58.0f/255.0f, 1.0f),     // borderActive
+                    ImVec4(60.0f/255.0f, 60.0f/255.0f, 83.0f/255.0f, 1.0f),     // hint     (text_inactive)
+                    ImVec4(255.0f/255.0f, 255.0f/255.0f, 255.0f/255.0f, 1.0f),  // text
+                    ImVec4(189.0f/255.0f, 189.0f/255.0f, 255.0f/255.0f, 1.0f),  // accent   (periwinkle)
+                    6.0f                                                        // rounding
+                };
+                ImGui::AstralInput("##key_login", s, sizeof(s), ImVec2(inputWidth, inputHeight), &loginInputStyle);
                 bool loginInputClicked = ImGui::IsItemClicked();
                 bool loginInputActive = ImGui::IsItemActive();
                 bool loginInputHovered = ImGui::IsItemHovered();
