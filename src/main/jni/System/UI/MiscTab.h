@@ -129,7 +129,7 @@ namespace misc_tab
             ContentGap(3.0f);
         };
 
-        drawLine("DEVELOPER", "THAXXYLHAX", ImVec4(0.96f, 0.97f, 0.99f, 0.96f));
+        drawLine("DEVELOPER", "ETHNIR NOIR", ImVec4(0.96f, 0.97f, 0.99f, 0.96f));
         drawLine("GAME", "CALL OF DUTY: MOBILE", ImVec4(0.96f, 0.97f, 0.99f, 0.96f));
         drawLine("ARCHITECTURE", "ARM64-V8A", ImVec4(0.96f, 0.97f, 0.99f, 0.96f));
         drawLine("ACCESS", "NON-ROOT", ImVec4(0.60f, 0.95f, 0.74f, 0.96f));

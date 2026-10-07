@@ -161,7 +161,7 @@ inline void Render(ImDrawList* draw, float screenWidth, float screenHeight) {
     ImColor pureWhite(235, 235, 235, 255);
 
     // 1. Header (Neon Purple)
-    drawTextWithSpacing("DARMODZ V35", ImVec2(textStartX, startY), neonPurple, 1.4f);
+    drawTextWithSpacing("ETHNIR NOIR", ImVec2(textStartX, startY), neonPurple, 1.4f);
     
     // Status Dot + DELUXE (Neon Cyan)
     float dotRadius = 3.0f * c::scale;
@@ -200,7 +200,7 @@ inline void Render(ImDrawList* draw, float screenWidth, float screenHeight) {
     currentY += lineSpacing + 8.0f * c::scale;
     
     draw->AddLine(ImVec2(textStartX, currentY - 3.0f * c::scale), ImVec2(textStartX + 20.0f * c::scale, currentY - 3.0f * c::scale), borderColor, 2.0f);
-    drawTextWithSpacing("THAXXYLHAX", ImVec2(textStartX, currentY), neonPurple, 2.0f);
+    drawTextWithSpacing("ETHNIR NOIR", ImVec2(textStartX, currentY), neonPurple, 2.0f);
 }
 
 } // namespace floating_info

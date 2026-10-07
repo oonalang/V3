@@ -338,6 +338,10 @@ inline void RenderSkinCategoryContent(int categoryIndex, bool drawSubTabs = fals
     #define ID_AETHER_CRYSTAL 0x1D37F77D
     #define ID_GLACIAL_RIPPLE 0x1D37F77F
     
+    // The skin loader publishes into charData / itemData / watch / ... from its
+    // own thread; hold the UI lock while we read them and while we apply a skin.
+    std::lock_guard<std::mutex> skinDataLock(g_skinUiMutex);
+
     ImGui::BeginChild("SkinContent", ImVec2(0, 0));
     ImGui::Dummy(ImVec2(0, 8 * c::scale));
     
@@ -509,6 +513,13 @@ case 0:
                     !RoleConfConfigInstance.empty() &&
                     !RolePackConfConfigInstance.empty()) {
 
+                    if (g_targetCharacters.empty())
+                        return;
+
+                    if (g_selectedTargetCharIndex < 0 ||
+                        (size_t)g_selectedTargetCharIndex >= g_targetCharacters.size())
+                        g_selectedTargetCharIndex = 0;
+
                     auto& target = g_targetCharacters[g_selectedTargetCharIndex];
 
                     int selTraitor1P = (target.name == "Charly")
@@ -529,7 +540,7 @@ case 0:
 
                     int selPackID = target.rolepackID;
 
-                    for (auto charModel : CharacterModelConfigInstance) {
+                    for (auto charModel : SkinSnapshot(CharacterModelConfigInstance)) {
 
                         if (!charModel)
                             continue;
@@ -556,7 +567,7 @@ case 0:
                     }
 
                     // ITEM RESOURCE
-                    for (auto itemRes : itemResourceConfigInstance) {
+                    for (auto itemRes : SkinSnapshot(itemResourceConfigInstance)) {
 
                         if (!itemRes)
                             continue;
@@ -584,7 +595,7 @@ case 0:
                         }
                     }
 
-                    for (auto roles : RoleConfConfigInstance) {
+                    for (auto roles : SkinSnapshot(RoleConfConfigInstance)) {
 
                         if (!roles)
                             continue;
@@ -606,7 +617,7 @@ case 0:
                         }
                     }
 
-                    for (auto pack : RolePackConfConfigInstance) {
+                    for (auto pack : SkinSnapshot(RolePackConfConfigInstance)) {
 
                         if (!pack)
                             continue;
@@ -630,6 +641,10 @@ case 0:
             ImGui::PopStyleVar();
         }
     }
+    else
+    {
+        ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "No character skins loaded yet - bring the tab up once the game has loaded");
+    }
     break;
 
 case 1:
@@ -646,11 +661,19 @@ case 1:
 
         SkinCheckbox(w.watchname.c_str(), &sBool[w.watchname], [&]() {
 
-            int sT1P = (g_targetCharacters[g_selectedTargetCharIndex].name == "Charly")
-                       ? 710001101
-                       : g_targetCharacters[g_selectedTargetCharIndex].traitor1p;
+            if (g_targetCharacters.empty())
+                return;
 
-            for (auto m : CharacterModelConfigInstance) {
+            const int targetIndex = (g_selectedTargetCharIndex >= 0 &&
+                                     (size_t)g_selectedTargetCharIndex < g_targetCharacters.size())
+                                    ? g_selectedTargetCharIndex
+                                    : 0;
+
+            int sT1P = (g_targetCharacters[targetIndex].name == "Charly")
+                       ? 710001101
+                       : g_targetCharacters[targetIndex].traitor1p;
+
+            for (auto m : SkinSnapshot(CharacterModelConfigInstance)) {
 
                 auto* cf = (CharacterModelFields*)((uintptr_t)m + 0x10);
 
@@ -664,6 +687,8 @@ case 1:
 
         ImGui::PopStyleVar();
     }
+    if (watch.empty())
+        ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "No watch skins loaded yet - bring the tab up once the game has loaded");
     break;
 
 case 2:
@@ -677,7 +702,7 @@ case 2:
 
         SkinCheckbox(d.deadname.c_str(), &sBool[d.deadname], [&]() {
 
-            for (auto db : BRDeadboxSkinConfigInstance) {
+            for (auto db : SkinSnapshot(BRDeadboxSkinConfigInstance)) {
 
                 auto* df = (BRDeadboxSkinFields*)((uintptr_t)db + 0x10);
 
@@ -695,6 +720,8 @@ case 2:
 
         ImGui::PopStyleVar();
     }
+    if (deadboxF.empty())
+        ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "No deadbox skins loaded yet - bring the tab up once the game has loaded");
     break;
 
 case 3:
@@ -708,7 +735,7 @@ case 3:
 
         SkinCheckbox(p.planename.c_str(), &sBool[p.planename], [&]() {
 
-            for (auto pl : BRDropPlaneSkinConfigInstance) {
+            for (auto pl : SkinSnapshot(BRDropPlaneSkinConfigInstance)) {
 
                 auto* dpf = (BRDropPlaneSkinFields*)((uintptr_t)pl + 0x10);
 
@@ -726,6 +753,8 @@ case 3:
 
         ImGui::PopStyleVar();
     }
+    if (dropplane.empty())
+        ImGui::TextColored(ImVec4(1, 0.5f, 0.5f, 1), "No drop plane skins loaded yet - bring the tab up once the game has loaded");
     break;
 
     case 4:
@@ -738,7 +767,7 @@ case 3:
                 int skinID = getitem.WeaponConf[2];
                 int itemID = getitem.Item2Inventory[0];
                 int lootID = getitem.Item2Inventory[3];
-                for (auto item : itemInventoryInstance)
+                for (auto item : SkinSnapshot(itemInventoryInstance))
                 {
                     if (!item)
                         continue;
@@ -749,7 +778,7 @@ case 3:
                         item2Fields->WeaponIconID = getitem.Item2Inventory[2];
                     }
                 }
-                for (auto conf : weaponConfInstance)
+                for (auto conf : SkinSnapshot(weaponConfInstance))
                 {
                     if (!conf)
                         continue;
@@ -764,7 +793,7 @@ case 3:
                         weaponconfFields->DefaultKillBrocast = getitem.WeaponConf[3];
                         weaponconfFields->ExternalUnVisible = true;
 
-                        for (auto skinConf : weaponConfInstance)
+                        for (auto skinConf : SkinSnapshot(weaponConfInstance))
                         {
                             if (!skinConf)
                                 continue;
@@ -789,7 +818,7 @@ case 3:
                     activeKillEffects[itemID] = getitem.WeaponExtra[4];
                     activeKillEffects[lootID] = getitem.WeaponExtra[4];
                 }
-                for (auto extra : weaponExtraInstance)
+                for (auto extra : SkinSnapshot(weaponExtraInstance))
                 {
                     if (!extra)
                         continue;
@@ -812,7 +841,7 @@ case 3:
                         weaponextraFields->DefaultKillEffectId = getitem.WeaponExtra[4];
                     }
                 }
-                for (auto asset : weaponAssetGroupInstance)
+                for (auto asset : SkinSnapshot(weaponAssetGroupInstance))
                 {
                     if (!asset)
                         continue;
@@ -825,7 +854,7 @@ case 3:
                         }
                     }
                 }
-                for (auto itemResource : itemResourceConfigInstance)
+                for (auto itemResource : SkinSnapshot(itemResourceConfigInstance))
                 {
                     if (!itemResource)
                         continue;
@@ -889,7 +918,7 @@ case 3:
                 }
 
                 int fireEffectID = 0;
-                for (auto asset : weaponAssetGroupInstance)
+                for (auto asset : SkinSnapshot(weaponAssetGroupInstance))
                 {
                     if (!asset)
                         continue;
@@ -903,7 +932,7 @@ case 3:
 
                 if (fireEffectID > 0)
                 {
-                    for (auto fireConf : weaponFireEffectInstance)
+                    for (auto fireConf : SkinSnapshot(weaponFireEffectInstance))
                     {
                         if (!fireConf)
                             continue;
@@ -1015,7 +1044,7 @@ case 3:
                 camoGlacialRipple = false;
                 for (const auto& getitem : itemData) {
                     if (getitem.itemName.find("[M]") != std::string::npos || getitem.itemName.find("[L]") != std::string::npos) {
-                        for (auto conf : weaponConfInstance) {
+                        for (auto conf : SkinSnapshot(weaponConfInstance)) {
                             if (!conf) continue;
                             weaponconfFields = (WeaponConfFields*)((uintptr_t)conf + 0x20);
                             if (weaponconfFields->ID == getitem.WeaponConf[2]) weaponconfFields->DefWeaponSkinID = 0;
@@ -1033,7 +1062,7 @@ case 3:
                 camoRedSprite = false;
                 for (const auto& getitem : itemData) {
                     if (getitem.itemName.find("[M]") != std::string::npos || getitem.itemName.find("[L]") != std::string::npos) {
-                        for (auto conf : weaponConfInstance) {
+                        for (auto conf : SkinSnapshot(weaponConfInstance)) {
                             if (!conf) continue;
                             weaponconfFields = (WeaponConfFields*)((uintptr_t)conf + 0x20);
                             if (weaponconfFields->ID == getitem.WeaponConf[2]) {
@@ -1051,7 +1080,7 @@ case 3:
                 camoDiamond = false;
                 for (const auto& getitem : itemData) {
                     if (getitem.itemName.find("[M]") != std::string::npos || getitem.itemName.find("[L]") != std::string::npos) {
-                        for (auto conf : weaponConfInstance) {
+                        for (auto conf : SkinSnapshot(weaponConfInstance)) {
                             if (!conf) continue;
                             weaponconfFields = (WeaponConfFields*)((uintptr_t)conf + 0x20);
                             if (weaponconfFields->ID == getitem.WeaponConf[2]) {
@@ -1069,7 +1098,7 @@ case 3:
                 camoRedSprite = false;
                 for (const auto& getitem : itemData) {
                     if (getitem.itemName.find("[M]") != std::string::npos || getitem.itemName.find("[L]") != std::string::npos) {
-                        for (auto conf : weaponConfInstance) {
+                        for (auto conf : SkinSnapshot(weaponConfInstance)) {
                             if (!conf) continue;
                             weaponconfFields = (WeaponConfFields*)((uintptr_t)conf + 0x20);
                             if (weaponconfFields->ID == getitem.WeaponConf[2]) {
@@ -1087,7 +1116,7 @@ case 3:
                 camoGold = false;
                 for (const auto& getitem : itemData) {
                     if (getitem.itemName.find("[M]") != std::string::npos || getitem.itemName.find("[L]") != std::string::npos) {
-                        for (auto conf : weaponConfInstance) {
+                        for (auto conf : SkinSnapshot(weaponConfInstance)) {
                             if (!conf) continue;
                             weaponconfFields = (WeaponConfFields*)((uintptr_t)conf + 0x20);
                             if (weaponconfFields->ID == getitem.WeaponConf[2]) {
@@ -1105,7 +1134,7 @@ case 3:
                 camoPlatinum = false;
                 for (const auto& getitem : itemData) {
                     if (getitem.itemName.find("[M]") != std::string::npos || getitem.itemName.find("[L]") != std::string::npos) {
-                        for (auto conf : weaponConfInstance) {
+                        for (auto conf : SkinSnapshot(weaponConfInstance)) {
                             if (!conf) continue;
                             weaponconfFields = (WeaponConfFields*)((uintptr_t)conf + 0x20);
                             if (weaponconfFields->ID == getitem.WeaponConf[2]) {
@@ -1123,7 +1152,7 @@ case 3:
                 camoDamascus = false;
                 for (const auto& getitem : itemData) {
                     if (getitem.itemName.find("[M]") != std::string::npos || getitem.itemName.find("[L]") != std::string::npos) {
-                        for (auto conf : weaponConfInstance) {
+                        for (auto conf : SkinSnapshot(weaponConfInstance)) {
                             if (!conf) continue;
                             weaponconfFields = (WeaponConfFields*)((uintptr_t)conf + 0x20);
                             if (weaponconfFields->ID == getitem.WeaponConf[2]) {
@@ -1141,7 +1170,7 @@ case 3:
                 camoAetherCrystal = false;
                 for (const auto& getitem : itemData) {
                     if (getitem.itemName.find("[M]") != std::string::npos || getitem.itemName.find("[L]") != std::string::npos) {
-                        for (auto conf : weaponConfInstance) {
+                        for (auto conf : SkinSnapshot(weaponConfInstance)) {
                             if (!conf) continue;
                             weaponconfFields = (WeaponConfFields*)((uintptr_t)conf + 0x20);
                             if (weaponconfFields->ID == getitem.WeaponConf[2]) {
@@ -1200,6 +1229,8 @@ case 3:
         }
         break;
     }
+    ImGui::EndChild(); // ##SkinList
+
     if (showKeyboard) {
         if (activeInputID == "##SearchCustomChar") {
             RenderVirtualKeyboard("##VirtualKeyboard", charSearchQuery, IM_ARRAYSIZE(charSearchQuery), &showKeyboard);
@@ -1207,6 +1238,8 @@ case 3:
             RenderVirtualKeyboard("##VirtualKeyboard", searchQuery, IM_ARRAYSIZE(searchQuery), &showKeyboard);
         }
     }
+
+    ImGui::EndChild(); // SkinContent
 }
 
 inline void RenderTab4Content() {

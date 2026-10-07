@@ -1115,7 +1115,33 @@ namespace ModernUI {
         }
     }
 
-    int RenderCategoryWheel(const ImVec2& viewportCenter)
+    // Keeps the wheel hub (its center) inside the display so it can always be
+    // grabbed again after a drag or a resolution/rotation change.
+    inline ImVec2 ClampWheelPos(const ImVec2& pos, const ImVec2& displaySize)
+    {
+        const float slack = 230.0f; // half of the wheel window
+        ImVec2 out = pos;
+        if (displaySize.x <= 0.0f || displaySize.y <= 0.0f)
+            return out; // display size not known yet
+        out.x = ImClamp(out.x, -slack, ImMax(-slack, displaySize.x - slack));
+        out.y = ImClamp(out.y, -slack, ImMax(-slack, displaySize.y - slack));
+        return out;
+    }
+
+    // Keeps the menu header on screen so the container can always be dragged back.
+    inline ImVec2 ClampMenuPos(const ImVec2& pos, const ImVec2& windowSize, const ImVec2& displaySize)
+    {
+        const float minVisibleX = 140.0f;
+        const float minVisibleY = 90.0f;
+        ImVec2 out = pos;
+        if (displaySize.x <= 0.0f || displaySize.y <= 0.0f)
+            return out; // display size not known yet
+        out.x = ImClamp(out.x, ImMin(0.0f, -windowSize.x + minVisibleX), ImMax(0.0f, displaySize.x - minVisibleX));
+        out.y = ImClamp(out.y, 0.0f, ImMax(0.0f, displaySize.y - minVisibleY));
+        return out;
+    }
+
+    int RenderCategoryWheel(const ImVec2& defaultCenter)
     {
         const float windowSize  = 460.0f;
         const float outerRadius = 195.0f;
@@ -1124,7 +1150,30 @@ namespace ModernUI {
         const int sliceCount = 6;
         const char* labels[sliceCount] = { "VISUAL", "COMBAT", "MEMORY", "SKINS", "MISC", "SETTINGS" };
 
-        ImGui::SetNextWindowPos(viewportCenter, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+        const ImVec2 wheelDisplaySize = ImGui::GetIO().DisplaySize;
+
+        // Centered on the display by default, then free-draggable; the position
+        // the user drags it to is remembered in ui_layout.ini.
+        static ImVec2 wheelPos(0.0f, 0.0f);
+        static ImVec2 wheelPosApplied(-99999.0f, -99999.0f);
+        static int  wheelHoldSlice = -1;
+        static bool wheelDragging  = false;
+        static bool wheelPosInit   = false;
+        if (!wheelPosInit)
+        {
+            wheelPosInit = true;
+            const ui_layout::State& layout = ui_layout::Get();
+            wheelPos = layout.hasWheel
+                ? ImVec2(layout.wheelX, layout.wheelY)
+                : ImVec2(defaultCenter.x - windowSize * 0.5f, defaultCenter.y - windowSize * 0.5f);
+        }
+        const ImVec2 wheelDrawPos = ClampWheelPos(wheelPos, wheelDisplaySize);
+
+        if (wheelDrawPos.x != wheelPosApplied.x || wheelDrawPos.y != wheelPosApplied.y)
+        {
+            ImGui::SetNextWindowPos(wheelDrawPos, ImGuiCond_Always);
+            wheelPosApplied = wheelDrawPos;
+        }
         ImGui::SetNextWindowSize(ImVec2(windowSize, windowSize), ImGuiCond_Always);
         ImGui::SetNextWindowBgAlpha(0.0f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
@@ -1160,6 +1209,39 @@ namespace ModernUI {
             int hoverSlice = -1;
             if (r >= hubRadius && r <= outerRadius)
                 hoverSlice = (int)(rawAngle / sliceAngle);
+
+            // Drag & drop: press the wheel, move it and release to keep the new
+            // spot (stored in ui_layout.ini). A plain tap still picks a tab.
+            const bool wheelHitboxActive = ImGui::IsItemActive();
+            if (wheelHitboxActive && !wheelDragging && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 6.0f))
+                wheelDragging = true;
+
+            if (wheelDragging)
+            {
+                wheelPos = ClampWheelPos(wheelPos + ImGui::GetIO().MouseDelta, wheelDisplaySize);
+                ImGui::SetWindowPos(wheelPos, ImGuiCond_Always);
+                wheelPosApplied = wheelPos;
+            }
+            else if (wheelHitboxActive && wheelHoldSlice < 0)
+            {
+                wheelHoldSlice = hoverSlice;
+            }
+
+            if (!ImGui::IsMouseDown(ImGuiMouseButton_Left))
+            {
+                if (wheelDragging)
+                {
+                    ui_layout::RememberWheel(wheelPos.x, wheelPos.y);
+                    wheelDragging = false;
+                    wheelHoldSlice = -1;
+                }
+                else if (wheelHoldSlice >= 0)
+                {
+                    if (hoverSlice == wheelHoldSlice)
+                        selected = hoverSlice + 1;
+                    wheelHoldSlice = -1;
+                }
+            }
 
             float hr, hg, hb;
             ImGui::ColorConvertHSVtoRGB(ImClamp(main_runtime_theme::g_menuHue, 0.0f, 1.0f), 0.50f, 0.97f, hr, hg, hb);
@@ -1226,12 +1308,14 @@ namespace ModernUI {
                 dl->AddText(ImVec2(p.x - ts.x * 0.5f, p.y - ts.y * 0.5f), col, labels[s]);
             }
 
-            const char* hub = "JAREDAX";
-            ImVec2 hs = ImGui::CalcTextSize(hub);
-            dl->AddText(ImVec2(c.x - hs.x * 0.5f, c.y - hs.y * 0.5f), IM_COL32(255, 255, 255, 245), hub);
-
-            if (hoverSlice >= 0 && ImGui::IsItemClicked(ImGuiMouseButton_Left))
-                selected = hoverSlice + 1;
+            const char* hubLine1 = "ETHNIR";
+            const char* hubLine2 = "NOIR";
+            const ImVec2 hubSize1 = ImGui::CalcTextSize(hubLine1);
+            const ImVec2 hubSize2 = ImGui::CalcTextSize(hubLine2);
+            const float hubLineGap = 1.0f;
+            const float hubTotalH  = hubSize1.y + hubSize2.y + hubLineGap;
+            dl->AddText(ImVec2(c.x - hubSize1.x * 0.5f, c.y - hubTotalH * 0.5f), IM_COL32(255, 255, 255, 245), hubLine1);
+            dl->AddText(ImVec2(c.x - hubSize2.x * 0.5f, c.y - hubTotalH * 0.5f + hubSize1.y + hubLineGap), IM_COL32(255, 255, 255, 245), hubLine2);
         }
         ImGui::End();
         ImGui::PopStyleVar(3);
@@ -1312,6 +1396,7 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
         Config.Aim.By = EAim::Distance;
         Config.Bline = 2.0f;
         Config.Pline = 2.0f;
+        ui_layout::LoadLayout();
         g_App = true;
     }
 
@@ -1419,17 +1504,18 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
         runtime_preview_menu::EnsureTexturesLoaded();
         main_runtime_theme::ApplyThemeState();
 
-        ImVec2 viewportCenter = ImVec2(ImGui::GetIO().DisplaySize.x * 0.5f, 40.0f);
         ImVec2 displaySize = ImGui::GetIO().DisplaySize;
+        const ImVec2 viewportCenter = ImVec2(displaySize.x * 0.5f, displaySize.y * 0.5f);
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
 
         if (!isLogin)
         {
-            ImGui::SetNextWindowPos(viewportCenter, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+            // Login is pinned to the middle of the screen and cannot be dragged.
+            ImGui::SetNextWindowPos(viewportCenter, ImGuiCond_Always, ImVec2(0.5f, 0.5f));
             ImGui::SetNextWindowSize(ImVec2(640, 460), ImGuiCond_Always);
             ImGui::SetNextWindowBgAlpha(0.0f);
 
-            if (ImGui::Begin(OBFUSCATE("Login Menu"), nullptr, ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse))
+            if (ImGui::Begin(OBFUSCATE("Login Menu"), nullptr, ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse))
             {
                 const ImVec2 pos = ImGui::GetWindowPos();
                 ImDrawList* draw = ImGui::GetWindowDrawList();
@@ -1611,11 +1697,27 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                 ImVec2 mainWindowSize = ImVec2(1120.f, 640.f);
                 mainWindowSize.x = ImMin(mainWindowSize.x, displaySize.x);
                 mainWindowSize.y = ImMin(mainWindowSize.y, displaySize.y);
-                ImGui::SetNextWindowPos(viewportCenter, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+
+                // Centered on first open, then free-draggable: grab the header and
+                // the dropped position is remembered in ui_layout.ini.
+                static ImVec2 menuWindowPos(0.0f, 0.0f);
+                static ImVec2 menuPosOnDisk(-99999.0f, -99999.0f);
+                static bool menuPosInit = false;
+                if (!menuPosInit)
+                {
+                    menuPosInit = true;
+                    const ui_layout::State& layout = ui_layout::Get();
+                    menuWindowPos = layout.hasMenu
+                        ? ImVec2(layout.menuX, layout.menuY)
+                        : ImVec2((displaySize.x - mainWindowSize.x) * 0.5f, (displaySize.y - mainWindowSize.y) * 0.5f);
+                    menuWindowPos = ModernUI::ClampMenuPos(menuWindowPos, mainWindowSize, displaySize);
+                    if (layout.hasMenu) menuPosOnDisk = menuWindowPos;
+                    ImGui::SetNextWindowPos(menuWindowPos, ImGuiCond_Always);
+                }
                 ImGui::SetNextWindowSize(mainWindowSize, ImGuiCond_Always);
                 ImGui::SetNextWindowBgAlpha(0.0f);
 
-                ImGui::Begin("@ThaxxylHax", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground);
+                ImGui::Begin("@EthnirNoir", nullptr, ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoBringToFrontOnFocus | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBackground);
                 {
                     runtime_preview_menu::StateRefs runtimeState{dark, tabAlpha, tabAdd, page, activeTab, windowCollapsed, isMenuVisible, collapseBarLastActiveTime, collapseBarOpacityAnim, collapseBarPressAnim};
                     {
@@ -1629,6 +1731,7 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
 
                         const ImVec2 runtimeWindowSize = ImGui::GetWindowSize();
                         const ImVec2 runtimeWindowPos = ImGui::GetWindowPos();
+                        menuWindowPos = runtimeWindowPos;
                         ImDrawList *runtimeDrawList = ImGui::GetWindowDrawList();
 
                         runtimeDrawList->AddRectFilled(runtimeWindowPos, ImVec2(runtimeWindowPos.x + runtimeWindowSize.x, runtimeWindowPos.y + runtimeWindowSize.y), IM_COL32(6, 6, 6, 255), 5.0f);
@@ -1675,7 +1778,7 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
 
                         ImFont *runtimeTitleFont = custom::shell::GetTitleFont();
                         const float runtimeTitleSize = 22.0f;
-                        const char *titleA = "JAREDAX CONTAINER";
+                        const char *titleA = "ETHNIR NOIR CONTAINER";
                         const char *titleB = " V3";
                         const ImVec2 titleASize = runtimeTitleFont->CalcTextSizeA(runtimeTitleSize, FLT_MAX, 0.0f, titleA);
                         runtimeDrawList->AddText(runtimeTitleFont, runtimeTitleSize, ImVec2(headerMin.x + 56.0f, headerMin.y + 11.0f), IM_COL32(235, 235, 235, 255), titleA);
@@ -2027,6 +2130,15 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                     }
                 }
                 ImGui::End();
+
+                // Persist the container position once the drag is finished.
+                if (ImGui::IsMouseReleased(ImGuiMouseButton_Left) &&
+                    (menuWindowPos.x != menuPosOnDisk.x || menuWindowPos.y != menuPosOnDisk.y))
+                {
+                    ui_layout::RememberMenu(menuWindowPos.x, menuWindowPos.y);
+                    menuPosOnDisk = menuWindowPos;
+                }
+
                 ImGui::PopStyleVar();
             }
         }

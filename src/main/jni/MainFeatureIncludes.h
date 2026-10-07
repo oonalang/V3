@@ -5,6 +5,7 @@
 #include "System/Core/FileUtils.h"
 #include "System/Core/ConfigManager.h"
 #include "System/Core/SaveConfig.h"
+#include "System/Core/UiLayout.h"
 #include "System/Core/Bypass.h"
 
 #include "System/UI/GuestAccount.h"

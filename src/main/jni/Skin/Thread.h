@@ -159,6 +159,21 @@ VehicleItemConfCtor orig_VehicleItemConfCtor = nullptr;
 
 std::mutex g_dataMutex;
 
+// Guards the published UI skin lists (charData / watch / deadboxF / dropplane /
+// itemData / snowboardData / g_targetCharacters). The loader publishes into them
+// from its own thread while the menu renders from them, so reads and writes have
+// to be serialised: otherwise a reload can invalidate whatever the render thread
+// is iterating (which showed up as the menu dying while browsing skins).
+std::mutex g_skinUiMutex;
+
+// Copies a game-side instance list while holding g_dataMutex, because the ctor
+// hooks push into those vectors from the game thread.
+inline std::vector<void*> SkinSnapshot(const std::vector<void*>& instances)
+{
+    std::lock_guard<std::mutex> lock(g_dataMutex);
+    return instances;
+}
+
 void my_Item2InventoryCtor(void* instance) {
     orig_Item2InventoryCtor(instance);
     if (instance) {
@@ -448,19 +463,35 @@ void LoadCharacterSkins() {
         deadboxSkins = BRDeadboxSkinConfigInstance;
     }
 
-    if (charModels.empty() ||
-        itemRes.empty() ||
-        roleConfs.empty() ||
-        roleSkins.empty() ||
-        rolePacks.empty() ||
-        deadboxSkins.empty()) {
-        return;
-    }
+    // Each category is loaded as soon as its own source exists: an empty side
+    // table must not keep characters / watches / deadboxes hidden.
+    static bool watchLoaded   = false;
+    static bool deadboxLoaded = false;
+    static bool charsLoaded   = false;
 
-    watch.clear();
-    deadboxF.clear();
-    charData.clear();
-    g_targetCharacters.clear();
+    if (watchLoaded && deadboxLoaded && charsLoaded)
+        return;
+
+    const bool canLoadWatch   = !roleSkins.empty();
+    const bool canLoadDeadbox = !deadboxSkins.empty() && !roleConfs.empty();
+    const bool canLoadChars   = !charModels.empty() && !itemRes.empty() && !roleConfs.empty() && !rolePacks.empty();
+
+    if (!canLoadWatch && !canLoadDeadbox && !canLoadChars)
+        return;
+
+    if (!watchLoaded && canLoadWatch) {
+        std::lock_guard<std::mutex> lock(g_skinUiMutex);
+        watch.clear();
+    }
+    if (!deadboxLoaded && canLoadDeadbox) {
+        std::lock_guard<std::mutex> lock(g_skinUiMutex);
+        deadboxF.clear();
+    }
+    if (!charsLoaded && canLoadChars) {
+        std::lock_guard<std::mutex> lock(g_skinUiMutex);
+        charData.clear();
+        g_targetCharacters.clear();
+    }
 
     std::string lastKnownName = "";
     void* lastKnownLocId = nullptr;
@@ -472,6 +503,8 @@ void LoadCharacterSkins() {
     int lastKnownGest = 0;
     int lastKnownHand = 0;
     int lastKnownKillS = 0;
+
+    if (!watchLoaded && canLoadWatch) {
 
     for (auto &a : roleSkins) {
 
@@ -489,27 +522,40 @@ void LoadCharacterSkins() {
 
             if (!n.empty()) {
 
-                watch.push_back({
+                watcher watchEntry{
                     GetRarityPrefix(fx->ColorID) + n,
                     fx->FxAssetID_1P
-                });
+                };
+                std::lock_guard<std::mutex> lock(g_skinUiMutex);
+                watch.push_back(watchEntry);
             }
         }
     }
 
+    watchLoaded = true;
+
+    }
+
     std::string _g = "";
+
+    if (!deadboxLoaded && canLoadDeadbox) {
 
     for (auto &z : deadboxSkins) {
 
         if (!z || !Tools::IsPtrValid(z))
             continue;
 
-        auto *y = (BRDeadboxSkinFields *)((uintptr_t)z + 0x18);
+        auto *y = (BRDeadboxSkinFields *)((uintptr_t)z + 0x10);
 
         if (!Tools::IsPtrValid(y))
             continue;
 
         bool __b = false;
+
+        auto deadBoxIdFor = (int (*)(void *))(getRealOffset(GetDeadBoxIDAddress));
+
+        if (!Tools::IsPtrValid((void*)deadBoxIdFor))
+            continue;
 
         for (auto &q : roleConfs) {
 
@@ -522,18 +568,13 @@ void LoadCharacterSkins() {
 
             if ((y->ID & 0xFFFFFFF) != 0) {
 
-                auto fx = (int (*)(void *))(getRealOffset(GetDeadBoxIDAddress));
-
-                if (!Tools::IsPtrValid((void*)fx))
-                    continue;
-
-                int k = fx(q);
+                int k = deadBoxIdFor(q);
 
                 if (y->ID == k && !__b) {
 
                     auto dump = [&](const std::string &nm) {
 
-                        deadboxF.push_back({
+                        deadbox boxEntry{
                             GetRarityPrefix(y->ColorID) + nm,
                             {
                                 y->ColorID,
@@ -543,7 +584,9 @@ void LoadCharacterSkins() {
                                 y->ModelAsset3P,
                                 y->ModelAssetUI
                             }
-                        });
+                        };
+                        std::lock_guard<std::mutex> lock(g_skinUiMutex);
+                        deadboxF.push_back(boxEntry);
                     };
 
                     if (y->ColorID == 5) {
@@ -571,7 +614,7 @@ void LoadCharacterSkins() {
 
                         std::string v = _g + " (Variant)";
 
-                        deadboxF.push_back({
+                        deadbox boxVariant{
                             GetRarityPrefix(y->ColorID) + v,
                             {
                                 y->ColorID,
@@ -581,19 +624,27 @@ void LoadCharacterSkins() {
                                 y->ModelAsset3P,
                                 y->ModelAssetUI
                             }
-                        });
+                        };
+                        std::lock_guard<std::mutex> lock(g_skinUiMutex);
+                        deadboxF.push_back(boxVariant);
                     }
                 }
             }
         }
     }
 
+    deadboxLoaded = true;
+
+    }
+
+    if (!charsLoaded && canLoadChars) {
+
     for (auto X0 : charModels) {
 
         if (!X0 || !Tools::IsPtrValid(X0))
             continue;
 
-        auto *X1 = (CharacterModelFields *)((uintptr_t)X0 + 0x18);
+        auto *X1 = (CharacterModelFields *)((uintptr_t)X0 + 0x10);
 
         if (!Tools::IsPtrValid(X1))
             continue;
@@ -619,7 +670,7 @@ void LoadCharacterSkins() {
             if (!Y0 || !Tools::IsPtrValid(Y0))
                 continue;
 
-            auto *Y1 = (ItemResourceFields *)((uintptr_t)Y0 + 0x18);
+            auto *Y1 = (ItemResourceFields *)((uintptr_t)Y0 + 0x10);
 
             if (!Tools::IsPtrValid(Y1))
                 continue;
@@ -643,7 +694,7 @@ void LoadCharacterSkins() {
                 if (!Z0 || !Tools::IsPtrValid(Z0))
                     continue;
 
-                auto *Z1 = (RoleConfFields *)((uintptr_t)Z0 + 0x18);
+                auto *Z1 = (RoleConfFields *)((uintptr_t)Z0 + 0x10);
 
                 if (!Tools::IsPtrValid(Z1))
                     continue;
@@ -673,7 +724,7 @@ void LoadCharacterSkins() {
                     if (!RP || !Tools::IsPtrValid(RP))
                         continue;
 
-                    auto *rpF = (RolePackFields *)((uintptr_t)RP + 0x18);
+                    auto *rpF = (RolePackFields *)((uintptr_t)RP + 0x10);
 
                     if (!Tools::IsPtrValid(rpF))
                         continue;
@@ -744,7 +795,7 @@ void LoadCharacterSkins() {
                 else
                     Zz = "[C] " + n0;
 
-                charData.push_back({
+                charInfo charEntry{
 
                     Zz,
 
@@ -799,11 +850,16 @@ void LoadCharacterSkins() {
                         j,
                         killS
                     }
-                });
+                };
+
+                {
+                    std::lock_guard<std::mutex> lock(g_skinUiMutex);
+                    charData.push_back(charEntry);
+                }
 
                 if (!n0.empty()) {
 
-                    g_targetCharacters.push_back({
+                    TargetChar targetChar{
 
                         n0,
                         N,
@@ -811,7 +867,10 @@ void LoadCharacterSkins() {
                         (int)W,
                         (int)Z1->ID,
                         h
-                    });
+                    };
+
+                    std::lock_guard<std::mutex> lock(g_skinUiMutex);
+                    g_targetCharacters.push_back(targetChar);
                 }
             }
 
@@ -819,7 +878,13 @@ void LoadCharacterSkins() {
         }
     }
 
+    charsLoaded = true;
+
+    }
+
     if (!g_targetCharacters.empty()) {
+
+        std::lock_guard<std::mutex> charIndexLock(g_skinUiMutex);
 
         bool foundCharly = false;
 
@@ -858,7 +923,18 @@ void LoadCharacterSkins() {
         }
     }
 
-    loadCharacter = true;
+    // Only stop re-scanning once every category produced data; partial results
+    // are already published above.
+    loadCharacter = watchLoaded && deadboxLoaded && charsLoaded;
+
+    if (!g_targetCharacters.empty()) {
+
+        std::lock_guard<std::mutex> charIndexLock(g_skinUiMutex);
+
+        const int lastTargetIndex = (int)g_targetCharacters.size() - 1;
+        if (g_selectedTargetCharIndex > lastTargetIndex) g_selectedTargetCharIndex = lastTargetIndex;
+        if (g_selectedTargetCharIndex < 0) g_selectedTargetCharIndex = 0;
+    }
 }
 
 void LoadWeaponSkins() {
@@ -878,8 +954,10 @@ void LoadWeaponSkins() {
         itemRes = itemResourceConfigInstance;
     }
 
-    if (weaponConfs.empty() || itemInvs.empty() || weaponAssets.empty() || weaponFires.empty() ||
-        weaponExtras.empty() || killEffects.empty() || mythicArmors.empty() || mythicSights.empty() || itemRes.empty()) {
+    // The weapon list only needs the weapon configs and their inventory entries;
+    // the other tables are optional lookups, so an empty one must not hide the
+    // whole weapon category.
+    if (weaponConfs.empty() || itemInvs.empty()) {
         return;
     }
 
@@ -912,7 +990,7 @@ void LoadWeaponSkins() {
 
     for (void* extra : weaponExtras) {
         if (!extra || !Tools::IsPtrValid(extra)) continue;
-        weaponextraFields = (WeaponConfExtraFields*)((uintptr_t)extra + 0x18);
+        weaponextraFields = (WeaponConfExtraFields*)((uintptr_t)extra + 0x10);
         if (!Tools::IsPtrValid(weaponextraFields)) continue;
         weaponExtraByID[weaponextraFields->ID] = extra;
     }
@@ -928,7 +1006,7 @@ void LoadWeaponSkins() {
 
     for (void* sight : mythicSights) {
         if (!sight || !Tools::IsPtrValid(sight)) continue;
-        mythicsightFields = (MythicSightFields*)((uintptr_t)sight + 0x18);
+        mythicsightFields = (MythicSightFields*)((uintptr_t)sight + 0x10);
         if (!Tools::IsPtrValid(mythicsightFields)) continue;
         auto* equipArray = *(Array<int>**)((uintptr_t)sight + 0x38);
         if (equipArray && Tools::IsPtrValid(equipArray) && equipArray->getLength() > 0) {
@@ -941,7 +1019,7 @@ void LoadWeaponSkins() {
 
     for (void* kill : killEffects) {
         if (!kill || !Tools::IsPtrValid(kill)) continue;
-        killeffectFields = (KillEffectItemFields*)((uintptr_t)kill + 0x18);
+        killeffectFields = (KillEffectItemFields*)((uintptr_t)kill + 0x10);
         if (!Tools::IsPtrValid(killeffectFields)) continue;
         auto* equipArray = *(Array<int>**)((uintptr_t)kill + 0x90);
         if (equipArray && Tools::IsPtrValid(equipArray) && equipArray->getLength() > 0) {
@@ -958,7 +1036,7 @@ void LoadWeaponSkins() {
 
     for (void* res : itemRes) {
         if (!res || !Tools::IsPtrValid(res)) continue;
-        itemFields = (ItemResourceFields*)((uintptr_t)res + 0x18);
+        itemFields = (ItemResourceFields*)((uintptr_t)res + 0x10);
         if (!Tools::IsPtrValid(itemFields)) continue;
         itemResByID[itemFields->ID] = res;
     }
@@ -1053,7 +1131,7 @@ void LoadWeaponSkins() {
                 auto itExtraBase = weaponExtraByID.find(baseID);
                 if (itExtraBase != weaponExtraByID.end()) {
                     void* extra = itExtraBase->second;
-                    weaponextraFields = (WeaponConfExtraFields*)((uintptr_t)extra + 0x18);
+                    weaponextraFields = (WeaponConfExtraFields*)((uintptr_t)extra + 0x10);
                     if (Tools::IsPtrValid(weaponextraFields)) {
                         extraOrig = weaponextraFields->ID;
                     }
@@ -1061,7 +1139,7 @@ void LoadWeaponSkins() {
                 auto itExtraConf = weaponExtraByID.find(confID);
                 if (itExtraConf != weaponExtraByID.end()) {
                     void* extra = itExtraConf->second;
-                    weaponextraFields = (WeaponConfExtraFields*)((uintptr_t)extra + 0x18);
+                    weaponextraFields = (WeaponConfExtraFields*)((uintptr_t)extra + 0x10);
                     if (Tools::IsPtrValid(weaponextraFields)) {
                         deadReplay = weaponextraFields->DefaultDeadReplayEffectId;
                         killEffect = weaponextraFields->DefaultKillEffectId;
@@ -1115,7 +1193,7 @@ void LoadWeaponSkins() {
                 auto itItemRes = itemResByID.find(confID);
                 if (itItemRes != itemResByID.end()) {
                     void* itemResource = itItemRes->second;
-                    itemFields = (ItemResourceFields*)((uintptr_t)itemResource + 0x18);
+                    itemFields = (ItemResourceFields*)((uintptr_t)itemResource + 0x10);
                     if (Tools::IsPtrValid(itemFields)) {
                         xItem1 = itemFields->FxAssetID;
                         xItem2 = itemFields->InventoryModelID;
@@ -1127,13 +1205,17 @@ void LoadWeaponSkins() {
                     }
                 }
 
-                itemData.push_back({displayName,
+                itemInfo weaponEntry{displayName,
                     {itemBase, itemIDskin2, itemIDskin3, itemBaseModified},
                     {confBaseSkin, confColor, confID, confBrocastID, confBluePrintID},
                     {extraOrig, mythicArmor, sightMythic, deadReplay, killEffect},
                     {assetIds, fireIds, fireIds2},
                     {xItem1, xItem2, xItem3},
-                    {spr1, spr2, spr3, spr4}});
+                    {spr1, spr2, spr3, spr4}};
+                {
+                    std::lock_guard<std::mutex> lock(g_skinUiMutex);
+                    itemData.push_back(weaponEntry);
+                }
             }
         }
     }
@@ -1152,13 +1234,15 @@ void LoadPlaneSkins() {
 
     for (void* plane : dropPlaneSkins) {
         if (!plane || !Tools::IsPtrValid(plane)) continue;
-        dropplaneFields = (BRDropPlaneSkinFields*)((uintptr_t)plane + 0x18);
+        dropplaneFields = (BRDropPlaneSkinFields*)((uintptr_t)plane + 0x10);
         if (!Tools::IsPtrValid(dropplaneFields)) continue;
         std::string planeName = GetNameString(GetDropPlaneName, plane);
         if (dropplaneFields->ModelAsset1P != 0 && !getplane[planeName]) {
             getplane[planeName] = true;
             std::string prefix = GetRarityPrefix(dropplaneFields->ColorID);
-            dropplane.push_back({prefix + planeName, {dropplaneFields->ColorID, dropplaneFields->ModelAsset1P, dropplaneFields->ModelAsset3P, dropplaneFields->ModelAssetCutScene, dropplaneFields->ModelAssetUI, dropplaneFields->Priority}});
+            planeID planeEntry{prefix + planeName, {dropplaneFields->ColorID, dropplaneFields->ModelAsset1P, dropplaneFields->ModelAsset3P, dropplaneFields->ModelAssetCutScene, dropplaneFields->ModelAssetUI, dropplaneFields->Priority}};
+            std::lock_guard<std::mutex> lock(g_skinUiMutex);
+            dropplane.push_back(planeEntry);
             if (getplane.size() == dropPlaneSkins.size())
                 break;
         }
@@ -1187,9 +1271,9 @@ inline void* FindVehicleSkinConfigById(int skinId) {
     auto exact = activeVehicleSkinConfs.find(skinId);
     if (exact != activeVehicleSkinConfs.end() && SkinPtr(exact->second))
         return exact->second;
-    for (void* skin : vehicleSkinConfigInstance) {
+    for (void* skin : SkinSnapshot(vehicleSkinConfigInstance)) {
         if (!SkinPtr(skin)) continue;
-        auto* fields = (VehicleSkinConfFields*)((uintptr_t)skin + 0x18);
+        auto* fields = (VehicleSkinConfFields*)((uintptr_t)skin + 0x10);
         if (SkinPtr(fields) && (int)fields->ID == skinId)
             return skin;
     }
@@ -1203,7 +1287,7 @@ inline int ActiveVehicleSkinIdForType(int vehicleType) {
 
 inline int ActiveVehicleSkinIdForConf(void* skinConf) {
     if (!SkinPtr(skinConf)) return 0;
-    auto* fields = (VehicleSkinConfFields*)((uintptr_t)skinConf + 0x18);
+    auto* fields = (VehicleSkinConfFields*)((uintptr_t)skinConf + 0x10);
     if (!SkinPtr(fields)) return 0;
     auto byId = activeVehicleSkinsById.find((int)fields->VehicleId);
     if (byId != activeVehicleSkinsById.end()) return byId->second;
@@ -1230,7 +1314,7 @@ inline int ActiveSkisSkinId() {
 inline void ForceSkisSkinFields(void* instance, int selected) {
     if (!SkinPtr(instance) || selected <= 0) return;
     void* conf = FindVehicleSkinConfigById(selected);
-    auto* fields = SkinPtr(conf) ? (VehicleSkinConfFields*)((uintptr_t)conf + 0x18) : nullptr;
+    auto* fields = SkinPtr(conf) ? (VehicleSkinConfFields*)((uintptr_t)conf + 0x10) : nullptr;
     const int mesh = SkinPtr(fields) ? fields->NewVehicleResId : 0;
     *(uint*)((uintptr_t)instance + 0x88) = (uint)selected;
     if (mesh > 0) {
@@ -1334,7 +1418,7 @@ void LoadSnowboardSkins() {
 
     for (void* skin : skinConfs) {
         if (!skin || !Tools::IsPtrValid(skin)) continue;
-        auto* fields = (VehicleSkinConfFields*)((uintptr_t)skin + 0x18);
+        auto* fields = (VehicleSkinConfFields*)((uintptr_t)skin + 0x10);
         if (!Tools::IsPtrValid(fields)) continue;
         if (fields->VehicleId != 31707110) continue;
         int skinId = (int)fields->ID;
@@ -1342,7 +1426,10 @@ void LoadSnowboardSkins() {
         loadedIds[skinId] = true;
         std::string prefix = GetRarityPrefix((int)fields->ColorID);
         std::string name = prefix + "Snowboard Skin " + std::to_string(skinId);
-        snowboardData.push_back({name, skinId});
+        {
+            std::lock_guard<std::mutex> lock(g_skinUiMutex);
+            snowboardData.push_back({name, skinId});
+        }
     }
 }
 
@@ -1373,11 +1460,29 @@ void Skins_Thread()
     DobbyHook((void*)getRealOffset(VehicleSkinConfAddress), (void*)my_VehicleSkinConfCtor, (void**)&orig_VehicleSkinConfCtor);
     DobbyHook((void*)getRealOffset(VehicleItemConfAddress), (void*)my_VehicleItemConfCtor, (void**)&orig_VehicleItemConfCtor);
 
-    while (!Tools::GetBaseAddress("libRoosterNN.so"))
+    // Skin data is collected on its own thread so a missing helper library can
+    // never stall it. The lists start filling as soon as the game creates the
+    // config objects, which is what the Skins tab renders.
+    std::thread([] {
+        // Small head start so the game finishes its early config pass first.
+        std::this_thread::sleep_for(std::chrono::seconds(5));
+        while (true)
+        {
+            LoadCharacterSkins();
+            LoadWeaponSkins();
+            LoadPlaneSkins();
+            LoadSnowboardSkins();
+            std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+        }
+    }).detach();
+
+    // The feature hooks below need the game's helper library: wait for it, but
+    // do not block forever if it never shows up.
+    for (int i = 0; i < 30 && !Tools::GetBaseAddress("libRoosterNN.so"); ++i)
     {
         sleep(1);
     }
-    
+
     sleep(5);
     
     Tools::Hook((void*)(m_unity + 0xA61AC70), (void*)_GetCurrentWeaponKillEffect, (void**)&orig_GetCurrentWeaponKillEffect);
@@ -1409,12 +1514,4 @@ void Skins_Thread()
     if (skisApplySkinAddr != 0 && Tools::IsPtrValid((void*)skisApplySkinAddr))
         VehicleSkis_ApplySkin = reinterpret_cast<void (*)(void*)>(skisApplySkinAddr);
     
-    while (true)
-    {
-        LoadCharacterSkins();
-        LoadWeaponSkins();
-        LoadPlaneSkins();
-        LoadSnowboardSkins();
-        std::this_thread::sleep_for(std::chrono::milliseconds(1500));
-    }
 }
