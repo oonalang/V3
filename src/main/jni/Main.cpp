@@ -1335,15 +1335,14 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
         const ImVec2 display = ImGui::GetIO().DisplaySize;
 
         const float restoreWidth  = display.x;
-        const float restoreHeight = 220.0f;
+        const float restoreHeight = 80.0f;
 
         static double hiddenRestoreLastTap = -10.0;
         const double fastDoubleTapWindow = 0.30;
 
-        ImGui::SetNextWindowPos(
-            ImVec2(0.0f, display.y - restoreHeight),
+        ImGui::SetNextWindowPos(ImVec2(0.0f, 8.0f),
             ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(restoreWidth, restoreHeight), ImGuiCond_Always);
+        ImGui::SetNextWindowSize(ImVec2(restoreWidth, 80.0f), ImGuiCond_Always);
         ImGui::SetNextWindowBgAlpha(0.0f);
 
         ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
@@ -1364,28 +1363,35 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
             ImGui::InvisibleButton("##astavex_hidden_restore_doubletap",
                                    ImVec2(restoreWidth, restoreHeight));
 
-            if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left))
             {
-                const double now = ImGui::GetTime();
-                if ((now - hiddenRestoreLastTap) <= fastDoubleTapWindow)
+                const ImVec2 mouse = ImGui::GetIO().MousePos;
+                const bool inRestoreBand = (mouse.y >= 0.0f) && (mouse.y <= restoreHeight)
+                    && (mouse.x >= (display.x * 0.5f - 40.0f)) && (mouse.x <= (display.x * 0.5f + 40.0f));
+
+                if (inRestoreBand)
                 {
-                    windowCollapsed = false;
-                    isMenuVisible = true;
-                    g_ShowRadialMenu = true;
-                    hiddenRestoreLastTap = -10.0;
-                }
-                else
-                {
-                    hiddenRestoreLastTap = now;
+                    const double now = ImGui::GetTime();
+                    if ((hiddenRestoreLastTap >= 0.0) && (now - hiddenRestoreLastTap) > fastDoubleTapWindow)
+                    {
+                        windowCollapsed = false;
+                        isMenuVisible = true;
+                        g_ShowRadialMenu = true;
+                        hiddenRestoreLastTap = -10.0;
+                    }
+                    else
+                    {
+                        hiddenRestoreLastTap = now;
+                    }
                 }
             }
-
-            if ((ImGui::GetTime() - hiddenRestoreLastTap) > fastDoubleTapWindow)
-                hiddenRestoreLastTap = -10.0;
         }
         ImGui::End();
         ImGui::PopStyleColor(2);
         ImGui::PopStyleVar(3);
+        collapseBarRestoreAnim = 0.0f;
+        collapseBarWasCollapsed = false;
+        collapseBarEnterAnim = 1.0f;
     }
     else
     {
@@ -1413,14 +1419,14 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
         runtime_preview_menu::EnsureTexturesLoaded();
         main_runtime_theme::ApplyThemeState();
 
-        ImVec2 viewportCenter = ImGui::GetMainViewport()->GetCenter();
+        ImVec2 viewportCenter = ImVec2(ImGui::GetIO().DisplaySize.x * 0.5f, 40.0f);
         ImVec2 displaySize = ImGui::GetIO().DisplaySize;
         ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0, 0));
 
         if (!isLogin)
         {
             ImGui::SetNextWindowPos(viewportCenter, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
-            ImGui::SetNextWindowSize(ImVec2(500, 530), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(640, 460), ImGuiCond_Always);
             ImGui::SetNextWindowBgAlpha(0.0f);
 
             if (ImGui::Begin(OBFUSCATE("Login Menu"), nullptr, ImGuiWindowFlags_NoBackground | ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse))
@@ -1428,9 +1434,9 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                 const ImVec2 pos = ImGui::GetWindowPos();
                 ImDrawList* draw = ImGui::GetWindowDrawList();
 
-                ModernUI::RenderMenuEdgeLightning(draw, draw, pos, ImVec2(pos.x + 500.0f, pos.y + 530.0f));
+                ModernUI::RenderMenuEdgeLightning(draw, draw, pos, ImVec2(pos.x + 640.0f, pos.y + 460.0f));
 
-                const ImVec2 login_size = ImVec2(500, 530);
+                const ImVec2 login_size = ImVec2(640, 460);
                 const float outerRounding = 10.0f;
                 const float innerInset = 10.0f;
                 const float innerRounding = 12.0f;
@@ -1443,7 +1449,7 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                 draw->AddRectFilledMultiColor(innerMin, ImVec2(innerMax.x, innerMin.y + (innerMax.y - innerMin.y) * 0.44f), main_runtime_theme::GetAccentTintU32(0.22f, 0.11f), main_runtime_theme::GetAccentTintU32(0.16f, 0.06f), IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0));
 
                 auto drawLoginButton = [&](const char* label, float y, float width, bool primary) -> bool {
-                    const float buttonX = (500.0f - width) * 0.5f;
+                    const float buttonX = (640.0f - width) * 0.5f;
                     ImGui::SetCursorPos(ImVec2(buttonX, y));
                     if (F50) ImGui::PushFont(F50);
                     const bool pressed = ImGui::InvisibleButton(label, ImVec2(width, 50.0f));
@@ -1480,7 +1486,7 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                 {
                     const char* titleText = "LOG IN";
                     const float titleSize = 34.0f;
-                    const float titleX = pos.x + 30.0f;
+                    const float titleX = pos.x + 80.0f;
                     const float titleY = pos.y + 56.0f;
                     if (F50) draw->AddText(F50, titleSize, ImVec2(titleX, titleY), ImGui::GetColorU32(c::text::text_active), titleText);
                     else draw->AddText(ImVec2(titleX, titleY), ImGui::GetColorU32(c::text::text_active), titleText);
@@ -1496,8 +1502,8 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
 
                 {
                     const char* orLabel = "OR";
-                    const float sepLeft = pos.x + 30.0f;
-                    const float sepRight = pos.x + 470.0f;
+                    const float sepLeft = pos.x + 80.0f;
+                    const float sepRight = pos.x + 520.0f;
                     const float sepMidY = pos.y + 254.0f;
                     const ImVec2 orSize = ImGui::CalcTextSize(orLabel);
                     const float sepMidX = (sepLeft + sepRight) * 0.5f;
@@ -1511,7 +1517,7 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                 const float inputWidth = 440.0f;
                 const float inputHeight = 56.0f;
                 const float inputX = (login_size.x - inputWidth) * 0.5f;
-                ImGui::SetCursorPos(ImVec2(inputX, 284.0f));
+                ImGui::SetCursorPos(ImVec2(inputX, 314.0f));
                 ImGui::AstralInput("##key_login", s, sizeof(s), ImVec2(inputWidth, inputHeight));
                 bool loginInputClicked = ImGui::IsItemClicked();
                 bool loginInputActive = ImGui::IsItemActive();
@@ -1523,16 +1529,16 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                     ImGuiIO& io = ImGui::GetIO();
                     float screenHeight = io.DisplaySize.y;
                     float keyboardHeight = screenHeight * 0.60f;
-                    if (ImGui::GetMousePos().y < screenHeight - keyboardHeight) showKeyboard = false;
+                    if (ImGui::GetMousePos().y > screenHeight - keyboardHeight) showKeyboard = false;
                 }
 
-                if (drawLoginButton("PASTE", 176.0f, 440.0f, false)) {
+                if (drawLoginButton("PASTE", 176.0f, 480.0f, false)) {
                     auto key = getClipboard();
                     strncpy(s, key.c_str(), sizeof(s) - 1);
                     s[sizeof(s) - 1] = '\0';
                 }
 
-                if (drawLoginButton("LOG IN", 360.0f, 440.0f, true)) {
+                if (drawLoginButton("LOG IN", 360.0f, 480.0f, true)) {
                     err = Login(s);
                     if (err == "OK") {
                         showKeyboard = false;
@@ -1547,7 +1553,7 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                     }
                 }
                 if (!err.empty() && err != "OK") {
-                    ImGui::SetCursorPos(ImVec2(30, 430.0f));
+                    ImGui::SetCursorPos(ImVec2(30, 458.0f));
                     ImGui::TextColored(ImColor(255, 90, 90, 255), "Error: %s", err.c_str());
                 }
 
@@ -1714,7 +1720,7 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                             isMenuVisible = false;
                             g_ShowRadialMenu = false;
                         }
-                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide (double-tap bottom to restore)");
+                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide (double-tap top middle to restore)");
                         ImGui::PopStyleColor(5);
 
                         ImGui::PopStyleVar(2);
