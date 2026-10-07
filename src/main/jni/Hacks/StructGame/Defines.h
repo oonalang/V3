@@ -147,6 +147,7 @@ void UpdateAllOffset(){
 #define Class_DamageInfo_m_Damage (0x14)
 #define Class_DamageInfo_m_HitGroup (0x54)
 #define EHitGroup_Head (1)
+#define EHitGroup_Body (3)
 
 #define Class_Pawn_m_SpineBone (0x1D68)
 #define Class_Pawn_m_NeckBone (0x1D70)

@@ -212,33 +212,93 @@ inline float hook_GetMaxJumpHeight(void* instance) {
 
 //-- Increase Damage
 inline bool (*orig_SingleLineCheckPhysics)(void* instance, int hitType, void* hitTarget, void* hitCollider, Vector3 startPos, Vector3 dir, void* impactInfo) = nullptr;
+
+// Aim-aware hitbox state: the physics hook remembers which enemy (and its head
+// height / head position) accepted the expanded shot, so the damage hook can
+// decide Head vs Body from where the shot actually landed.
+inline void*  g_hitboxAcceptedPawn   = nullptr;   // enemy Pawn accepted by the physics check
+inline float  g_hitboxHeadHeightY    = 0.0f;      // that pawn's head world Y
+inline Vector3 g_hitboxHeadPos       = Vector3::zero();
+inline uintptr_t g_hitboxDamageInfo  = 0;         // DamageInfo produced right after the accepted shot
+
+struct HitboxAcceptResult {
+    bool     hit;
+   Pawn*    pawn;
+    float    headY;
+    Vector3  headPos;
+};
+
+static HitboxAcceptResult HitboxRayTest(const Vector3& startPos, const Vector3& dir) {
+    HitboxAcceptResult result{false, nullptr, 0.0f, Vector3::zero()};
+    MatchGame* matchGame = GamePlay::get_MatchGame();
+    if (!Tools::IsPtrValid(matchGame)) return result;
+    List<Pawn*>* enemyPawns = matchGame->EnemyPawns();
+    if (!Tools::IsPtrValid(enemyPawns)) return result;
+    Pawn** enemyItems = enemyPawns->getItems();
+    const int enemyCount = enemyPawns->getSize();
+    if (!Tools::IsPtrValid(enemyItems) || enemyCount <= 0) return result;
+
+    // Slider breaks the fixed size: scale grows the capsule in every direction.
+    // scale 1 (old default) -> radius 0.875m, top 1.75m, bottom 0.10m
+    const float s = ImClamp(Config.ExtraMenu.HitboxScale, 0.5f, 25.0f);
+    const float radius      = 0.50f + 0.375f * s;         // grows with the slider
+    const float radiusSq    = radius * radius;
+    const float topY        = 0.95f + 0.80f * s;         // capsule top (head zone)
+    const float bottomY     = 0.10f - 0.02f * s;         // capsule bottom (feet/ground)
+    const float topBonusY   = 0.30f + 0.10f * s;         // zone above the head that still counts
+    const Vector3 rayAxis = Vector3::Normalized(dir);
+
+    float bestAlong = FLT_MAX;
+    for (int i = 0; i < enemyCount; i++) {
+        Pawn* enemy = enemyItems[i];
+        if (!Tools::IsPtrValid(enemy) || !enemy->m_IsAlive()) continue;
+
+        const Vector3 root   = enemy->get_LastPawnPos();     // pelvis/root of the model
+        const Vector3 head   = enemy->get_HeadPosition();
+        const float   headY  = head.y;
+
+        // Vertical capsule around the enemy model: base at bottomY above the
+        // root position, up to topY. Center at each Y level.
+        const float baseY = root.y + bottomY;   // capsule bottom in world space
+
+        // Closest point on the ray to the capsule axis (vertical at root.x/root.z)
+        const Vector3 toEnemy = root - startPos;
+        const float alongRay = Vector3::Dot(toEnemy, rayAxis);
+        if (alongRay <= 0.0f) continue;                      // behind us
+        const Vector3 closest = startPos + rayAxis * alongRay;
+
+        // Horizontal distance from the ray (at its closest approach) to the axis
+        const float dx = closest.x - root.x;
+        const float dz = closest.z - root.z;
+        const float horizDistSq = dx * dx + dz * dz;
+
+        // The ray height while passing the model decides where it "lands".
+        // Applying the same Y to both sides keeps the range checks scale-free.
+        const float closestWorldY = closest.y;
+        const float rel = closestWorldY - baseY;             // capsule-relative height
+        const float segTop = (root.y + topY + topBonusY) - baseY;
+
+        if (horizDistSq <= radiusSq && rel >= 0.0f && rel <= segTop) {
+            if (alongRay < bestAlong) {
+                bestAlong = alongRay;
+                result.hit = true;
+                result.pawn = enemy;
+                result.headY = headY;
+                result.headPos = head;
+            }
+        }
+    }
+    return result;
+}
+
 inline bool SingleLineCheckPhysics(void* instance, int hitType, void* hitTarget, void* hitCollider, Vector3 startPos, Vector3 dir, void* impactInfo) {
     if (instance != NULL && Config.ExtraMenu.Hit) {
-        MatchGame* matchGame = GamePlay::get_MatchGame();
-        if (Tools::IsPtrValid(matchGame)) {
-            List<Pawn*> *enemyPawns = matchGame->EnemyPawns();
-            if (Tools::IsPtrValid(enemyPawns)) {
-                Pawn **enemyItems = enemyPawns->getItems();
-                const int enemyCount = enemyPawns->getSize();
-                if (Tools::IsPtrValid(enemyItems) && enemyCount > 0) {                        const float hitboxScale = ImClamp(Config.ExtraMenu.HitboxScale, 1.0f, 15.0f);
-                        const float hitboxRadiusSq = (hitboxScale * hitboxScale) * 0.0625f;
-                    const Vector3 rayAxis = Vector3::Normalized(dir);
-                    for (int i = 0; i < enemyCount; i++) {
-                        Pawn* enemy = enemyItems[i];
-                        if (!Tools::IsPtrValid(enemy) || !enemy->m_IsAlive()) {
-                            continue;
-                        }
-                        const Vector3 toEnemy = enemy->get_HeadPosition() - startPos;
-                        const float alongRay = Vector3::Dot(toEnemy, rayAxis);
-                        if (alongRay <= 0.0f) {
-                            continue;
-                        }
-                        if (Vector3::SqrMagnitude(toEnemy) - (alongRay * alongRay) <= hitboxRadiusSq) {
-                            return true;
-                        }
-                    }
-                }
-            }
+        const HitboxAcceptResult acc = HitboxRayTest(startPos, dir);
+        if (acc.hit) {
+            g_hitboxAcceptedPawn = (void*)acc.pawn;
+            g_hitboxHeadHeightY = acc.headY;
+            g_hitboxHeadPos = acc.headPos;
+            return true;
         }
     }
     return orig_SingleLineCheckPhysics(instance, hitType, hitTarget, hitCollider, startPos, dir, impactInfo);
@@ -247,8 +307,42 @@ inline bool SingleLineCheckPhysics(void* instance, int hitType, void* hitTarget,
 inline void* (*orig_CalcDamageInfoInstantHit)(void* instance, void** inImpactInfo, unsigned char inFireMode, void* sourcePos, int clientTime, int ammoCount, float punchX, float punchY, float spreadX, float spreadY, float fightOffSpeed, float fightOffUp) = nullptr;
 inline void* CalcDamageInfoInstantHit(void* instance, void** inImpactInfo, unsigned char inFireMode, void* sourcePos, int clientTime, int ammoCount, float punchX, float punchY, float spreadX, float spreadY, float fightOffSpeed, float fightOffUp) {
     void* damageInfo = orig_CalcDamageInfoInstantHit(instance, inImpactInfo, inFireMode, sourcePos, clientTime, ammoCount, punchX, punchY, spreadX, spreadY, fightOffSpeed, fightOffUp);
+    g_hitboxDamageInfo = (uintptr_t)damageInfo;
     if (Config.ExtraMenu.Hit && damageInfo != NULL) {
-        *(int*)((uintptr_t)damageInfo + Class_DamageInfo_m_HitGroup) = EHitGroup_Head;
+        // dump.cs DamageInfo: HitPos 0x30 (Vector3), HitNormal 0x3C, SourcePos 0x48,
+        // HitGroup 0x54 (offset already used by the project, confirms the block).
+        const uintptr_t di = (uintptr_t)damageInfo;
+        const Vector3 hitPos = *(const Vector3*)(di + 0x30);
+
+        int hitGroup = EHitGroup_Body;
+
+        // Preferred: the enemy pawn whose expanded hitbox accepted this shot.
+        Pawn* accPawn = (Pawn*)g_hitboxAcceptedPawn;
+        if (Tools::IsPtrValid(accPawn)) {
+            const Vector3 head = accPawn->get_HeadPosition();
+            if (hitPos.y >= head.y - 0.35f) {
+                // At head level or above (also "next to / above the head") -> headshot.
+                hitGroup = EHitGroup_Head;
+            }
+        } else if (g_hitboxHeadHeightY > 0.0f) {
+            // Fallback: remembered head height from the physics check.
+            if (hitPos.y >= g_hitboxHeadHeightY - 0.35f) {
+                hitGroup = EHitGroup_Head;
+            }
+        } else {
+            // Last resort: shooter-relative estimate (head is ~1.5m above the eye line
+            // source in CODM's model space; anything clearly upper counts as head).
+            const Vector3 src = *(const Vector3*)(di + 0x48);
+            if (hitPos.y - src.y >= 0.65f) {
+                hitGroup = EHitGroup_Head;
+            }
+        }
+
+        *(int*)(di + Class_DamageInfo_m_HitGroup) = hitGroup;
+
+        // One shot -> one decision: clear so a normal miss/bullet does not inherit it.
+        g_hitboxAcceptedPawn = nullptr;
+        g_hitboxHeadHeightY = 0.0f;
     }
     return damageInfo;
 }
