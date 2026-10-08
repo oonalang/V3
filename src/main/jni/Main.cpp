@@ -1002,17 +1002,25 @@ static std::string g_loginResult;
 static std::mutex  g_loginMutex;
 static float g_loginStart = 0.0f;
 static bool g_loginInFlight = false;
+static bool g_loginCompletedBeforePaint = false;
+static std::string g_loginOrphanedResult;
 
 static void SaveLoginTextForAttempt(const char* text) {
+    if (!text) {
+        logintext[0] = '\0';
+        return;
+    }
     strncpy(logintext, text, sizeof(logintext) - 1);
     logintext[sizeof(logintext) - 1] = '\0';
 }
 
 static void StartLoginAttempt(const char* key) {
-    const std::string attemptKey = key;
+    const std::string attemptKey = key ? key : "";
     {
         std::lock_guard<std::mutex> lock(g_loginMutex);
         g_loginResult.clear();
+        g_loginCompletedBeforePaint = false;
+        g_loginOrphanedResult.clear();
     }
     SaveLoginTextForAttempt(key);
     g_loginInFlight = true;
@@ -1020,15 +1028,24 @@ static void StartLoginAttempt(const char* key) {
     std::thread([attemptKey]() {
         const std::string result = Login(attemptKey.c_str());
         std::lock_guard<std::mutex> lock(g_loginMutex);
+        if (result == "OK") {
+            g_loginOrphanedResult = result;
+            g_loginCompletedBeforePaint = true;
+        }
         g_loginResult = result;
     }).detach();
 }
 
 static std::string TakeLoginResult() {
     std::lock_guard<std::mutex> lock(g_loginMutex);
+    if (g_loginCompletedBeforePaint && g_loginOrphanedResult == "OK") {
+        g_loginCompletedBeforePaint = false;
+        g_loginOrphanedResult.clear();
+        g_loginInFlight = false;
+        return "OK";
+    }
     const std::string result = g_loginResult;
-    if (!result.empty())
-        g_loginResult.clear();
+    g_loginResult.clear();
     return result;
 }
 
@@ -1687,8 +1704,10 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
 
                 if (drawLoginButton("PASTE", 176.0f, 480.0f, false)) {
                     auto key = getClipboard();
-                    strncpy(s, key.c_str(), sizeof(s) - 1);
-                    s[sizeof(s) - 1] = '\0';
+                    if (!key.empty()) {
+                        strncpy(s, key.c_str(), sizeof(s) - 1);
+                        s[sizeof(s) - 1] = '\0';
+                    }
                 }
 
                 if (drawLoginButton("LOG IN", 360.0f, 480.0f, true)) {

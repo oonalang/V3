@@ -34,15 +34,22 @@ struct range {
 };
 
 inline void InitializeProtection() {
-MemoryPatch::createWithHex("libanogs.so", 0x204218, "00 00 80 D2 C0 03 5F D6").Modify();
-MemoryPatch::createWithHex("libanogs.so", 0x3893D8, "00 00 80 D2 C0 03 5F D6").Modify();
-MemoryPatch::createWithHex("libanogs.so", 0x455A80, "00 00 80 D2 C0 03 5F D6").Modify();
-MemoryPatch::createWithHex("libanogs.so", 0x497244, "00 00 80 D2 C0 03 5F D6").Modify();
-MemoryPatch::createWithHex("libanogs.so", 0x4AFC1C, "00 00 80 D2 C0 03 5F D6", 32);
+    static bool s_protectionInitialized = false;
+    if (s_protectionInitialized) {
+        return;
+    }
+    s_protectionInitialized = true;
+
+    if (VM == nullptr) {
+        return;
+    }
+
+    MemoryPatch::createWithHex("libanogs.so", 0x204218, "00 00 80 D2 C0 03 5F D6").Modify();
+    MemoryPatch::createWithHex("libanogs.so", 0x3893D8, "00 00 80 D2 C0 03 5F D6").Modify();
+    MemoryPatch::createWithHex("libanogs.so", 0x455A80, "00 00 80 D2 C0 03 5F D6").Modify();
+    MemoryPatch::createWithHex("libanogs.so", 0x497244, "00 00 80 D2 C0 03 5F D6").Modify();
+    MemoryPatch::createWithHex("libanogs.so", 0x4AFC1C, "00 00 80 D2 C0 03 5F D6", 32);
     for (auto offs : range{0x1, 0x1000}) {
         MemoryPatch::createWithHex("libanogs.so", offs, armFalse).Modify();
     }
-    
 }
-    
-    

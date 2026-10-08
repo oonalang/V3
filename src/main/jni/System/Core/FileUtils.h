@@ -13,6 +13,10 @@ extern JavaVM* VM;
 extern char logintext[4096];
 
 std::string GetFilesDirPath(JavaVM* vm) {
+    if (!vm) {
+        LOGE("Failed to get JavaVM");
+        return "";
+    }
     JNIEnv* env = AttachCurrentThread3(vm);
     if (!env) {
         LOGE("Failed to get JNIEnv");
@@ -97,6 +101,9 @@ std::string GetFilesDirPath(JavaVM* vm) {
 }
 
 bool SaveLoginTextToFile(const char* logintext) {
+    if (!logintext) {
+        return false;
+    }
     std::string filesDir = GetFilesDirPath(VM);
     if (filesDir.empty()) {
         return false;
@@ -126,8 +133,13 @@ bool LoadTextFromFile() {
     if (file.is_open()) {
         buffer << file.rdbuf();
         file.close();
-        strncpy(logintext, buffer.str().c_str(), sizeof(logintext));
-        logintext[sizeof(logintext) - 1] = '\0';
+        std::string content = buffer.str();
+        if (content.empty()) {
+            logintext[0] = '\0';
+        } else {
+            strncpy(logintext, content.c_str(), sizeof(logintext));
+            logintext[sizeof(logintext) - 1] = '\0';
+        }
         return true;
     }
 
