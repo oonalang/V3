@@ -298,29 +298,40 @@ std::string Login(const char *user_key) {
     }
     
     jclass activityThreadClass = env->FindClass("android/app/ActivityThread");
+    if (!activityThreadClass) {
+        errMsg = "ActivityThread class not found";
+        goto login_cleanup;
+    }
     jfieldID sCurrentActivityThreadField = env->GetStaticFieldID(activityThreadClass, "sCurrentActivityThread", "Landroid/app/ActivityThread;");
+    if (!sCurrentActivityThreadField) {
+        errMsg = "sCurrentActivityThread field not found";
+        goto login_cleanup;
+    }
     jobject sCurrentActivityThread = env->GetStaticObjectField(activityThreadClass, sCurrentActivityThreadField);
+    if (!sCurrentActivityThread) {
+        errMsg = "sCurrentActivityThread is null";
+        goto login_cleanup;
+    }
     
     jfieldID mInitialApplicationField = env->GetFieldID(activityThreadClass, "mInitialApplication", "Landroid/app/Application;");
+    if (!mInitialApplicationField) {
+        errMsg = "mInitialApplication field not found";
+        goto login_cleanup;
+    }
     jobject mInitialApplication = env->GetObjectField(sCurrentActivityThread, mInitialApplicationField);
+    if (!mInitialApplication) {
+        errMsg = "mInitialApplication is null";
+        goto login_cleanup;
+    }
     
     std::string hwid = user_key;
     hwid += GetAndroidID(env, mInitialApplication);
     hwid += GetDeviceModel(env);
     hwid += GetDeviceBrand(env);
     std::string UUID = GetDeviceUniqueIdentifier(env, hwid.c_str());
-    if (env->ExceptionCheck()) {
-        env->ExceptionClear();
-    }
-    std::string errMsg;
-	usedKey = user_key;  
     
-	if (isVipKey(user_key)) {  
-        userType = "PREMIUM PAID";  
-    } else {  
-        userType = "PREMIUM PAID";  
-    }  
-	
+    std::string errMsg;
+    
     struct MemoryStruct chunk{};
     chunk.memory = (char *) calloc(1, 1);
     chunk.size = 0;
@@ -358,36 +369,33 @@ std::string Login(const char *user_key) {
             if (httpCode != 200) {
                 errMsg = "Server error: HTTP " + std::to_string(httpCode);
             } else {
-            try {
-                json result = json::parse(chunk.memory);
-                if (result["status"] == true) {
-                    std::string token = result["data"]["token"].get<std::string>();
-                    time_t rng = result["data"]["rng"].get<time_t>();
-					
-					EXP = result["data"]["EXP"].get<std::string>();  
-                               
-                    expiryTimestamp = parseExpiryDate(EXP);  
-					
-                    if (rng + 30 > time(0)) {
-                        std::string auth = "CODMGR";
-                        auth += "-";
-                        auth += user_key;
-                        auth += "-";
-                        auth += UUID;
-                        auth += "-";
-                        auth += "Vm8Lk7Uj2JmsjCPVPVjrLa7zgfx3uz9E";
-                        
-                        std::string outputAuth = CalcMD5(auth);
-                        g_Token = token;
-                        g_Auth = outputAuth;
-                        bValid = g_Token == g_Auth;
+                try {
+                    json result = json::parse(chunk.memory);
+                    if (result["status"] == true) {
+                        std::string token = result["data"]["token"].get<std::string>();
+                        time_t rng = result["data"]["rng"].get<time_t>();
+                        EXP = result["data"]["EXP"].get<std::string>();
+                        expiryTimestamp = parseExpiryDate(EXP);
+                        if (rng + 30 > time(0)) {
+                            std::string auth = "CODMGR";
+                            auth += "-";
+                            auth += user_key;
+                            auth += "-";
+                            auth += UUID;
+                            auth += "-";
+                            auth += "Vm8Lk7Uj2JmsjCPVPVjrLa7zgfx3uz9E";
+                            
+                            std::string outputAuth = CalcMD5(auth);
+                            g_Token = token;
+                            g_Auth = outputAuth;
+                            bValid = g_Token == g_Auth;
+                        }
+                    } else {
+                        errMsg = result["reason"].get<std::string>();
                     }
-                } else {
-                    errMsg = result["reason"].get<std::string>();
+                } catch (std::exception &e) {
+                    errMsg = e.what();
                 }
-            } catch (std::exception &e) {
-                errMsg = e.what();
-            }
             }
         } else {
             errMsg = curl_easy_strerror(res);
@@ -396,8 +404,16 @@ std::string Login(const char *user_key) {
     curl_easy_cleanup(curl);
     free(chunk.memory);
     chunk.memory = nullptr;
+    
+login_cleanup:
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+    }
     if (attachedHere) {
         jvm->DetachCurrentThread();
+    }
+    if (!errMsg.empty()) {
+        return errMsg;
     }
     return bValid ? "OK" : errMsg;
 }
