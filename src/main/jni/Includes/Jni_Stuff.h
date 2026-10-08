@@ -266,6 +266,11 @@ std::string getClipboard() {
 }
 
 std::string Login(const char *user_key) {
+    // Fast path: if we already authenticated successfully this session, don't block
+    // the UI on another full network round-trip just to draw the menu open.
+    if (bValid) {
+        return "OK";
+    }
     if (!jvm) {
         return "JavaVM unavailable";
     }
@@ -344,6 +349,8 @@ std::string Login(const char *user_key) {
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
         
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 12L);
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 6L);
         res = curl_easy_perform(curl);
         if (res == CURLE_OK) {
             long httpCode = 0;

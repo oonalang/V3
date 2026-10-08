@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <dlfcn.h>
 
 extern bool SnowB;
 extern float SnowBsize;
@@ -219,7 +220,97 @@ inline bool (*orig_SingleLineCheckPhysics)(void* instance, int hitType, void* hi
 inline void*  g_hitboxAcceptedPawn   = nullptr;   // enemy Pawn accepted by the physics check
 inline float  g_hitboxHeadHeightY    = 0.0f;      // that pawn's head world Y
 inline Vector3 g_hitboxHeadPos       = Vector3::zero();
-inline uintptr_t g_hitboxDamageInfo  = 0;         // DamageInfo produced right after the accepted shot
+inline uintptr_t g_hitboxDamageInfo  = 0;
+
+// A-Fire (triggerbot / auto-fire). Weapon::Tick runs every frame on the game
+// thread for the weapon the local player is holding, so that is where the
+// trigger is pressed and released: while a target sits under the crosshair the
+// weapon is told to start firing, and told to stop once the target is gone.
+inline bool     g_afireHoldingFire   = false;
+inline void    *g_afireFiringOn      = nullptr;
+inline float    g_afireLastPressTime = -1000.0f;
+
+inline void (*orig_Weapon_Tick)(void *instance, float deltaTime) = nullptr;
+inline void (*orig_Weapon_StartFire)(void *instance) = nullptr;
+inline void (*orig_Weapon_StopFire)(void *instance, bool isImmidiately) = nullptr;
+
+inline uintptr_t A_FireFindTarget() {
+    if (Camera::get_main() == nullptr)
+        return 0;
+    return (Config.Aim.By == EAim::Distance) ? GetClosestTarget() : GetInsideFOVTarget();
+}
+
+// Release the trigger we pressed (used when the toggle is switched back off).
+inline void A_FireReleaseTrigger(void *instance) {
+    if (!g_afireHoldingFire)
+        return;
+    if (instance == nullptr || instance == g_afireFiringOn) {
+        if (orig_Weapon_StopFire != nullptr && g_afireFiringOn != nullptr)
+            orig_Weapon_StopFire(g_afireFiringOn, false);
+        g_afireHoldingFire = false;
+        g_afireFiringOn = nullptr;
+    }
+}
+
+inline void hook_Weapon_Tick(void *instance, float deltaTime) {
+    if (orig_Weapon_Tick != nullptr)
+        orig_Weapon_Tick(instance, deltaTime);
+
+    if (instance == nullptr)
+        return;
+
+    if (!Config.ExtraMenu.A_Fire) {
+        A_FireReleaseTrigger(instance);
+        return;
+    }
+
+    Pawn *local = GamePlay::get_LocalPawn();
+    if (!Tools::IsPtrValid(local) || !local->m_IsAlive()) {
+        A_FireReleaseTrigger(instance);
+        return;
+    }
+
+    // Only drive the weapon the local player is currently holding.
+    Weapon *held = local->get_CurrentWeapon();
+    if (!Tools::IsPtrValid(held) || (void *) held != instance) {
+        A_FireReleaseTrigger(instance);
+        return;
+    }
+
+    bool ready = A_FireFindTarget() != 0;
+
+    // Criteria: 0 = whenever a target is under the crosshair,
+    //           1 = only while aiming / scoped,
+    //           2 = only while the fire button is already held.
+    if (ready && Config.ExtraMenu.A_FireTrigger == 1)
+        ready = Class_Pawn_IsAiming != 0 && ((bool (*)(uintptr_t)) Class_Pawn_IsAiming)((uintptr_t) local);
+    else if (ready && Config.ExtraMenu.A_FireTrigger == 2)
+        ready = Class_Pawn_get_IsFiring != 0 && ((bool (*)(uintptr_t)) Class_Pawn_get_IsFiring)((uintptr_t) local);
+
+    // Optional delay between trigger presses.
+    if (ready && Config.ExtraMenu.A_FireDelay > 0.0f) {
+        const float now = ImGui::GetTime();
+        if (now - g_afireLastPressTime < Config.ExtraMenu.A_FireDelay)
+            ready = false;
+    }
+
+    if (ready) {
+        if (!g_afireHoldingFire) {
+            if (orig_Weapon_StartFire != nullptr)
+                orig_Weapon_StartFire(instance);
+            g_afireHoldingFire = true;
+            g_afireFiringOn = instance;
+        }
+        g_afireLastPressTime = ImGui::GetTime();
+    } else if (g_afireHoldingFire && instance == g_afireFiringOn) {
+        if (orig_Weapon_StopFire != nullptr)
+            orig_Weapon_StopFire(instance, false);
+        g_afireHoldingFire = false;
+        g_afireFiringOn = nullptr;
+    }
+}
+
+         // DamageInfo produced right after the accepted shot
 
 struct HitboxAcceptResult {
     bool     hit;
@@ -314,27 +405,43 @@ inline void* CalcDamageInfoInstantHit(void* instance, void** inImpactInfo, unsig
         const uintptr_t di = (uintptr_t)damageInfo;
         const Vector3 hitPos = *(const Vector3*)(di + 0x30);
 
+        // Selected hit group (COMBAT > Hit Group). Auto decides from where the shot
+        // landed; anything else is written through verbatim.
         int hitGroup = EHitGroup_Body;
 
-        // Preferred: the enemy pawn whose expanded hitbox accepted this shot.
-        Pawn* accPawn = (Pawn*)g_hitboxAcceptedPawn;
-        if (Tools::IsPtrValid(accPawn)) {
-            const Vector3 head = accPawn->get_HeadPosition();
-            if (hitPos.y >= head.y - 0.35f) {
-                // At head level or above (also "next to / above the head") -> headshot.
-                hitGroup = EHitGroup_Head;
-            }
-        } else if (g_hitboxHeadHeightY > 0.0f) {
-            // Fallback: remembered head height from the physics check.
-            if (hitPos.y >= g_hitboxHeadHeightY - 0.35f) {
-                hitGroup = EHitGroup_Head;
-            }
-        } else {
-            // Last resort: shooter-relative estimate (head is ~1.5m above the eye line
-            // source in CODM's model space; anything clearly upper counts as head).
-            const Vector3 src = *(const Vector3*)(di + 0x48);
-            if (hitPos.y - src.y >= 0.65f) {
-                hitGroup = EHitGroup_Head;
+        switch (Config.Aim.HitGroup) {
+            case HitGroupHead:      hitGroup = EHitGroup_Head;      break;
+            case HitGroupHand:      hitGroup = EHitGroup_Hand;      break;
+            case HitGroupBody:      hitGroup = EHitGroup_Body;      break;
+            case HitGroupFoot:      hitGroup = EHitGroup_Foot;      break;
+            case HitGroupWeakPoint: hitGroup = EHitGroup_WeakPoint; break;
+            case HitGroupNeck:      hitGroup = EHitGroup_Neck;      break;
+            default: {
+                // Head band: how far below the head a hit still counts as a headshot.
+                const float headBand = ImClamp(Config.ExtraMenu.TuneHitboxHeadBand, 0.0f, 1.5f);
+
+                // Preferred: the enemy pawn whose expanded hitbox accepted this shot.
+                Pawn* accPawn = (Pawn*)g_hitboxAcceptedPawn;
+                if (Tools::IsPtrValid(accPawn)) {
+                    const Vector3 head = accPawn->get_HeadPosition();
+                    if (hitPos.y >= head.y - headBand) {
+                        // At head level or above (also "next to / above the head") -> headshot.
+                        hitGroup = EHitGroup_Head;
+                    }
+                } else if (g_hitboxHeadHeightY > 0.0f) {
+                    // Fallback: remembered head height from the physics check.
+                    if (hitPos.y >= g_hitboxHeadHeightY - headBand) {
+                        hitGroup = EHitGroup_Head;
+                    }
+                } else {
+                    // Last resort: shooter-relative estimate (head is ~1.5m above the eye line
+                    // source in CODM's model space; anything clearly upper counts as head).
+                    const Vector3 src = *(const Vector3*)(di + 0x48);
+                    if (hitPos.y - src.y >= 0.65f) {
+                        hitGroup = EHitGroup_Head;
+                    }
+                }
+                break;
             }
         }
 
@@ -345,6 +452,70 @@ inline void* CalcDamageInfoInstantHit(void* instance, void** inImpactInfo, unsig
         g_hitboxHeadHeightY = 0.0f;
     }
     return damageInfo;
+}
+
+//-- Report spoof
+// An outgoing player report is serialized by CSAccountReportUserReq.Write(writer).
+// With the toggle on, the reported account id is replaced just before the packet
+// is written, so the report is filed against the configured account instead.
+inline void (*orig_CSAccountReportUserReq_Write)(void *instance, void *writer) = nullptr;
+inline void hook_CSAccountReportUserReq_Write(void *instance, void *writer) {
+    if (Config.ExtraMenu.ReportSpoof && instance != nullptr && Config.ExtraMenu.ReportSpoofTargetId != 0) {
+        // CSAccountReportUserReq.reported_player_id (dump.cs, offset 0x60)
+        *(unsigned long long *) ((uintptr_t) instance + 0x60) = Config.ExtraMenu.ReportSpoofTargetId;
+    }
+    if (orig_CSAccountReportUserReq_Write != nullptr)
+        orig_CSAccountReportUserReq_Write(instance, writer);
+}
+
+//-- Rename card
+// Creates a managed string through the il2cpp runtime. The runtime export is
+// resolved once; if it cannot be found the rename simply stays inert instead of
+// calling a null pointer.
+inline String *CreateManagedString(const char *text) {
+    typedef String *(*StringNewFn)(const char *);
+    static StringNewFn stringNew = nullptr;
+    static bool resolved = false;
+    if (!resolved) {
+        resolved = true;
+        const char *candidates[] = {"libil2cpp.so", "libunity.so"};
+        for (const char *lib : candidates) {
+            void *handle = dlopen(lib, 4);
+            if (handle == nullptr)
+                continue;
+            stringNew = reinterpret_cast<StringNewFn>(dlsym(handle, "il2cpp_string_new"));
+            if (stringNew != nullptr)
+                break;
+        }
+    }
+    return (stringNew != nullptr) ? stringNew(text) : nullptr;
+}
+
+// Rewrites your own PlayerInfo nickname so the new name is what you (and the
+// clients that read it) see. Only runs when a name card is selected.
+inline void ApplyRenameCard() {
+    if (!Config.ExtraMenu.RenameCard || Config.ExtraMenu.RenameCardGid == 0)
+        return;
+    if (Config.ExtraMenu.RenameCardName[0] == '\0')
+        return;
+
+    Pawn *local = GamePlay::get_LocalPawn();
+    if (!Tools::IsPtrValid(local))
+        return;
+
+    PlayerInfo *info = *(PlayerInfo **) ((uintptr_t) local + Class_Pawn_m_PlayerInfo);
+    if (!Tools::IsPtrValid(info))
+        return;
+
+    String **nameSlot = (String **) ((uintptr_t) info + Class_PlayerInfo_m_NickName);
+    String *current = *nameSlot;
+    const char *currentText = (current != nullptr) ? current->CString() : nullptr;
+    if (currentText != nullptr && std::string(currentText) == std::string(Config.ExtraMenu.RenameCardName))
+        return;
+
+    String *replacement = CreateManagedString(Config.ExtraMenu.RenameCardName);
+    if (replacement != nullptr)
+        *nameSlot = replacement;
 }
 
 //-- Long Slide
@@ -972,6 +1143,15 @@ inline void InitializeAllHooks() {
     HOOK_LIB("libunity.so", "0xC1514C0", SingleLineCheckPhysics, orig_SingleLineCheckPhysics);
 
     HOOK_LIB("libunity.so", "0x5109DE4", CalcDamageInfoInstantHit, orig_CalcDamageInfoInstantHit);
+
+    //-- A-Fire (triggerbot / auto-fire)
+    // Weapon::Tick / StartFire / StopFire (RVAs from dump.cs).
+    orig_Weapon_StartFire = reinterpret_cast<void (*)(void *)>(getAbsoluteAddress("libunity.so", string2Offset("0x5123C84")));
+    orig_Weapon_StopFire = reinterpret_cast<void (*)(void *, bool)>(getAbsoluteAddress("libunity.so", string2Offset("0x5124EAC")));
+    HOOK_LIB("libunity.so", "0x5114C34", hook_Weapon_Tick, orig_Weapon_Tick);
+
+    //-- Report spoof (CSAccountReportUserReq.Write)
+    HOOK_LIB("libunity.so", "0x4298DDC", hook_CSAccountReportUserReq_Write, orig_CSAccountReportUserReq_Write);
 
 /*
     //-- Long Slide

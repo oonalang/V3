@@ -16,6 +16,8 @@
 #include <functional>
 #include <cstring>
 #include <cfloat>
+#include <mutex>
+#include <thread>
 #include <cmath>
 #include <jni.h>
 #include <pthread.h>
@@ -993,6 +995,44 @@ static std::string storedKey = "";
 static char s[256];
 static bool g_LoginTextLoaded = false;
 
+// Non-blocking login: the LOG IN button starts an in-flight request on a worker
+// thread; the draw code renders a loading indicator while it runs, then consumes
+// the result. That keeps the menu responsive even when the licence panel is slow.
+static std::string g_loginResult;
+static std::mutex  g_loginMutex;
+static float g_loginStart = 0.0f;
+static bool g_loginInFlight = false;
+
+static void SaveLoginTextForAttempt(const char* text) {
+    strncpy(logintext, text, sizeof(logintext) - 1);
+    logintext[sizeof(logintext) - 1] = '\0';
+}
+
+static void StartLoginAttempt(const char* key) {
+    const std::string attemptKey = key;
+    {
+        std::lock_guard<std::mutex> lock(g_loginMutex);
+        g_loginResult.clear();
+    }
+    SaveLoginTextForAttempt(key);
+    g_loginInFlight = true;
+    g_loginStart = ImGui::GetTime();
+    std::thread([attemptKey]() {
+        const std::string result = Login(attemptKey.c_str());
+        std::lock_guard<std::mutex> lock(g_loginMutex);
+        g_loginResult = result;
+    }).detach();
+}
+
+static std::string TakeLoginResult() {
+    std::lock_guard<std::mutex> lock(g_loginMutex);
+    const std::string result = g_loginResult;
+    if (!result.empty())
+        g_loginResult.clear();
+    return result;
+}
+
+
 std::vector<sRegion> trapRegions;
 uintptr_t address = 0;
 std::string md5(std::string s);
@@ -1407,6 +1447,9 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
     ImGui_ImplOpenGL3_NewFrame();
     ImGui::NewFrame();
 
+    // Rename card: keep the local player's own name in sync with the menu value.
+    ApplyRenameCard();
+
     ImDrawList *draw = ImGui::GetBackgroundDrawList();
 
     DrawESP(ImGui::GetBackgroundDrawList(), screenWidth, screenHeight, get_dpi());
@@ -1647,7 +1690,44 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                 }
 
                 if (drawLoginButton("LOG IN", 360.0f, 480.0f, true)) {
-                    err = Login(s);
+                    // Prevent re-triggering while a login is already in flight, and
+                    // keep the field editable so the user can change the key if they
+                    // mistype it before the request finishes.
+                    if (!g_loginInFlight && s[0] != '\0') {
+                        StartLoginAttempt(s);
+                    }
+                }
+
+                // Show a progress/loading state while the in-flight login is running.
+                if (g_loginInFlight) {
+                    const float elapsed = ImGui::GetTime() - g_loginStart;
+                    ImGui::PushFont(F50);
+                    ImGui::SetCursorPos(ImVec2(30, 420.0f));
+                    ImGui::TextColored(ImVec4(0.56f, 0.56f, 0.62f, 1.0f), "Authorizing...");
+                    ImGui::PopFont();
+                    ImGui::SetCursorPos(ImVec2(30.0f, 444.0f));
+                    ImGui::TextColored(ImVec4(0.56f, 0.56f, 0.62f, 0.9f),
+                                       "Please wait while we verify your license key...");
+                    std::string dots = ".";
+                    for (int i = 0; i < (int)std::fmod(elapsed * 3.0f, 3.0f); ++i) dots += ".";
+                    ImGui::SetCursorPos(ImVec2(30, 462.0f));
+                    ImGui::TextColored(ImVec4(0.42f, 0.42f, 0.47f, 1.0f), "Request in progress%s", dots.c_str());
+
+                    // Keep keyboard dismissal working so the user isn't stuck behind an
+                    // open keyboard while we wait for the server round-trip.
+                    if (showKeyboard && !loginInputActive && !loginInputHovered && ImGui::IsMouseClicked(0)) {
+                        ImGuiIO& io = ImGui::GetIO();
+                        float screenHeight = io.DisplaySize.y;
+                        float keyboardHeight = screenHeight * 0.60f;
+                        if (ImGui::GetMousePos().y > screenHeight - keyboardHeight) showKeyboard = false;
+                    }
+                }
+
+                // When the in-flight login completes, act on the result.
+                const std::string loginResult = TakeLoginResult();
+                if (g_loginInFlight && !loginResult.empty()) {
+                    g_loginInFlight = false;
+                    err = loginResult;
                     if (err == "OK") {
                         showKeyboard = false;
                         strncpy(logintext, s, sizeof(logintext) - 1);
@@ -1660,6 +1740,7 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                         g_ShowRadialMenu = true;
                     }
                 }
+
                 if (!err.empty() && err != "OK") {
                     ImGui::SetCursorPos(ImVec2(30, 458.0f));
                     ImGui::TextColored(ImColor(255, 90, 90, 255), "Error: %s", err.c_str());
@@ -1953,6 +2034,14 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                                     static const char *targetBy[] = {"Distance", "FOV"};
                                     custom::Combo("Target By", (int *)&Config.Aim.By, targetBy, IM_ARRAYSIZE(targetBy), -1);
                                     custom::SliderFloat("FOV Size", &Config.Aim.Cross, 0.0f, 100.0f, "%.0f");
+
+                                    static const char *hitGroups[] = {"Auto", "Head", "Hand", "Body", "Foot", "Weak Point", "Neck"};
+                                    custom::Combo("Hit Group", &Config.Aim.HitGroup, hitGroups, IM_ARRAYSIZE(hitGroups), -1);
+
+                                    custom::Checkbox("A-Fire", &Config.ExtraMenu.A_Fire);
+                                    static const char *aFireCriteria[] = {"Crosshair", "Scoping", "Shooting"};
+                                    custom::Combo("A-Fire On", &Config.ExtraMenu.A_FireTrigger, aFireCriteria, IM_ARRAYSIZE(aFireCriteria), -1);
+                                    custom::SliderFloat("Trigger Delay", &Config.ExtraMenu.A_FireDelay, 0.0f, 1.0f, "%.2fs");
                                     EndContentChild(right);
                                 }
                                 custom::EndGroup();
@@ -1965,6 +2054,7 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                                     const ChildFrame left = BeginContentChild("MEMORY HACKS", ImVec2(childWidth, childHeight));
                                     custom::Checkbox("Hitbox", &Config.ExtraMenu.Hit);
                                     custom::SliderFloat("Hitbox Size", &Config.ExtraMenu.HitboxScale, 0.5f, 25.0f, "%.1fm");
+                                    custom::SliderFloat("Head Band", &Config.ExtraMenu.TuneHitboxHeadBand, 0.0f, 1.5f, "%.2f");
                                     custom::Checkbox("No Recoil", &Config.ExtraMenu.Recoil);
                                     custom::Checkbox("No Spread", &Config.ExtraMenu.Spread);
                                     custom::Checkbox("No Shake", &Config.ExtraMenu.Shake);
@@ -1991,6 +2081,34 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                                     custom::SliderFloat("Slide Distance", &SlideRange, 0.0f, 30.0f, "%.1f");
                                     custom::SliderFloat("SpeedHack", &speedHackMultiplier, 0.5f, 2.0f, "%.1fx");
                                     custom::SliderFloat("High Jump", &jumpHeightMultiplier, 0.5f, 5.0f, "%.2fx");
+
+                                    custom::Checkbox("Report Spoof", &Config.ExtraMenu.ReportSpoof);
+                                    {
+                                        static char reportUidBuf[24] = "";
+                                        ImGui::TextUnformatted("Report To User ID");
+                                        ImGui::AstralInput("##report_uid", reportUidBuf, sizeof(reportUidBuf), ImVec2(ImGui::GetContentRegionAvail().x - 10.0f, 40.0f), nullptr);
+                                        if (ImGui::IsItemClicked()) showKeyboard = true;
+                                        if (showKeyboard && ImGui::IsItemActive()) RenderVirtualKeyboard("##VirtualKeyboardReportUid", reportUidBuf, sizeof(reportUidBuf), &showKeyboard);
+                                        Config.ExtraMenu.ReportSpoofTargetId = strtoull(reportUidBuf, nullptr, 10);
+                                    }
+
+                                    custom::Checkbox("Rename Card", &Config.ExtraMenu.RenameCard);
+                                    {
+                                        static char renameNameBuf[32] = "";
+                                        static char renameCardGidBuf[12] = "0";
+                                        ImGui::TextUnformatted("Name");
+                                        ImGui::AstralInput("##rename_name", renameNameBuf, sizeof(renameNameBuf), ImVec2(ImGui::GetContentRegionAvail().x - 10.0f, 40.0f), nullptr);
+                                        if (ImGui::IsItemClicked()) showKeyboard = true;
+                                        if (showKeyboard && ImGui::IsItemActive()) RenderVirtualKeyboard("##VirtualKeyboardRename", renameNameBuf, sizeof(renameNameBuf), &showKeyboard);
+                                        strncpy(Config.ExtraMenu.RenameCardName, renameNameBuf, sizeof(Config.ExtraMenu.RenameCardName) - 1);
+                                        Config.ExtraMenu.RenameCardName[sizeof(Config.ExtraMenu.RenameCardName) - 1] = '\0';
+
+                                        ImGui::TextUnformatted("Name Card GID (0 = none)");
+                                        ImGui::AstralInput("##rename_gid", renameCardGidBuf, sizeof(renameCardGidBuf), ImVec2(ImGui::GetContentRegionAvail().x - 10.0f, 40.0f), nullptr);
+                                        if (ImGui::IsItemClicked()) showKeyboard = true;
+                                        if (showKeyboard && ImGui::IsItemActive()) RenderVirtualKeyboard("##VirtualKeyboardRenameGid", renameCardGidBuf, sizeof(renameCardGidBuf), &showKeyboard);
+                                        Config.ExtraMenu.RenameCardGid = atoi(renameCardGidBuf);
+                                    }
                                     EndContentChild(right);
                                 }
                                 custom::EndGroup();

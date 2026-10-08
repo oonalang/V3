@@ -1,6 +1,7 @@
 #pragma once
 
 #include <iomanip>
+#include <cstring>
 #include <sstream>
 #include <ctime>
 
@@ -38,6 +39,7 @@ void SaveConfiguration(const std::string& filename) {
     config["Aim"]["Trigger"] = static_cast<int>(Config.Aim.Trigger);
     config["Aim"]["By"] = static_cast<int>(Config.Aim.By);
     config["Aim"]["size"] = Config.Aim.size;
+    config["Aim"]["HitGroup"] = Config.Aim.HitGroup;
 
     config["ExtraMenu"]["Flash"] = Config.ExtraMenu.Flash;
     config["ExtraMenu"]["Diving"] = Config.ExtraMenu.Diving;
@@ -54,6 +56,17 @@ void SaveConfiguration(const std::string& filename) {
     config["ExtraMenu"]["Scope"] = Config.ExtraMenu.Scope;
     config["ExtraMenu"]["Switch"] = Config.ExtraMenu.Switch;
     config["ExtraMenu"]["KineticArmor"] = Config.ExtraMenu.Kinetic;
+
+    // New feature toggles
+    config["ExtraMenu"]["TuneHitboxHeadBand"] = Config.ExtraMenu.TuneHitboxHeadBand;
+    config["ExtraMenu"]["A_Fire"] = Config.ExtraMenu.A_Fire;
+    config["ExtraMenu"]["A_FireTrigger"] = Config.ExtraMenu.A_FireTrigger;
+    config["ExtraMenu"]["A_FireDelay"] = Config.ExtraMenu.A_FireDelay;
+    config["ExtraMenu"]["ReportSpoof"] = Config.ExtraMenu.ReportSpoof;
+    config["ExtraMenu"]["ReportSpoofTargetId"] = Config.ExtraMenu.ReportSpoofTargetId;
+    config["ExtraMenu"]["RenameCard"] = Config.ExtraMenu.RenameCard;
+    config["ExtraMenu"]["RenameCardGid"] = Config.ExtraMenu.RenameCardGid;
+    config["ExtraMenu"]["RenameCardName"] = Config.ExtraMenu.RenameCardName;
 
     config["isJumpAdjustmentEnabled"] = isJumpAdjustmentEnabled;
     config["jumpHeightMultiplier"] = jumpHeightMultiplier;
@@ -108,6 +121,7 @@ bool LoadConfiguration(const std::string& filename) {
             Config.Aim.Trigger = static_cast<EAimTrigger>(config["Aim"]["Trigger"].get<int>());
             Config.Aim.By = static_cast<EAim>(config["Aim"]["By"].get<int>());
             Config.Aim.size = config["Aim"]["size"].get<float>();
+            if (config["Aim"].contains("HitGroup")) Config.Aim.HitGroup = config["Aim"]["HitGroup"].get<int>();
         }
 
         if (config.contains("ExtraMenu")) {
@@ -126,6 +140,20 @@ bool LoadConfiguration(const std::string& filename) {
             Config.ExtraMenu.Scope = config["ExtraMenu"]["Scope"].get<bool>();
             Config.ExtraMenu.Switch = config["ExtraMenu"]["Switch"].get<bool>();
             Config.ExtraMenu.Kinetic = config["ExtraMenu"]["Kinetic"].get<bool>();
+
+            if (config["ExtraMenu"].contains("TuneHitboxHeadBand")) Config.ExtraMenu.TuneHitboxHeadBand = config["ExtraMenu"]["TuneHitboxHeadBand"].get<float>();
+            if (config["ExtraMenu"].contains("A_Fire")) Config.ExtraMenu.A_Fire = config["ExtraMenu"]["A_Fire"].get<bool>();
+            if (config["ExtraMenu"].contains("A_FireTrigger")) Config.ExtraMenu.A_FireTrigger = config["ExtraMenu"]["A_FireTrigger"].get<int>();
+            if (config["ExtraMenu"].contains("A_FireDelay")) Config.ExtraMenu.A_FireDelay = config["ExtraMenu"]["A_FireDelay"].get<float>();
+            if (config["ExtraMenu"].contains("ReportSpoof")) Config.ExtraMenu.ReportSpoof = config["ExtraMenu"]["ReportSpoof"].get<bool>();
+            if (config["ExtraMenu"].contains("ReportSpoofTargetId")) Config.ExtraMenu.ReportSpoofTargetId = config["ExtraMenu"]["ReportSpoofTargetId"].get<unsigned long long>();
+            if (config["ExtraMenu"].contains("RenameCard")) Config.ExtraMenu.RenameCard = config["ExtraMenu"]["RenameCard"].get<bool>();
+            if (config["ExtraMenu"].contains("RenameCardGid")) Config.ExtraMenu.RenameCardGid = config["ExtraMenu"]["RenameCardGid"].get<int>();
+            if (config["ExtraMenu"].contains("RenameCardName")) {
+                const std::string savedName = config["ExtraMenu"]["RenameCardName"].get<std::string>();
+                std::strncpy(Config.ExtraMenu.RenameCardName, savedName.c_str(), sizeof(Config.ExtraMenu.RenameCardName) - 1);
+                Config.ExtraMenu.RenameCardName[sizeof(Config.ExtraMenu.RenameCardName) - 1] = '\0';
+            }
         }
 
         if (config.contains("isJumpAdjustmentEnabled"))

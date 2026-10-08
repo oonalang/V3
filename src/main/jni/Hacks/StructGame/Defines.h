@@ -6,6 +6,26 @@
 #define SLEEP_TIME 1000LL / 60LL
 uintptr_t m_unity;
 
+//-- Hit groups written into DamageInfo::m_HitGroup.
+// Values come from the game's own EHitGroup enum (dump.cs, TypeDefIndex 31063).
+typedef int EHitGroup;
+#define EHitGroup_Default (0)
+#define EHitGroup_Head (1)
+#define EHitGroup_Hand (2)
+#define EHitGroup_Body (3)
+#define EHitGroup_Foot (4)
+#define EHitGroup_WeakPoint (5)
+#define EHitGroup_Shield (6)
+#define EHitGroup_Left_Hand (7)
+#define EHitGroup_Right_Hand (8)
+#define EHitGroup_Left_Foot (9)
+#define EHitGroup_Right_Foot (10)
+#define EHitGroup_Neck (11)
+#define EHitGroup_UpBody (12)
+#define EHitGroup_UpArm (13)
+// Compatibility aliases: older builds referred to the generic/body region as "Field".
+#define EHitGroup_Field EHitGroup_Body
+
 uintptr_t libs;
 uintptr_t Class_Pawn_get_AimRotation;
 uintptr_t Class_Component_get_gameObject;
@@ -146,8 +166,7 @@ void UpdateAllOffset(){
 
 #define Class_DamageInfo_m_Damage (0x14)
 #define Class_DamageInfo_m_HitGroup (0x54)
-#define EHitGroup_Head (1)
-#define EHitGroup_Body (3)
+
 
 #define Class_Pawn_m_SpineBone (0x1D68)
 #define Class_Pawn_m_NeckBone (0x1D70)

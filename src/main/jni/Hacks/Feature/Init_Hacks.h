@@ -81,6 +81,19 @@ enum EAimTrigger {
     Scoping = 2
 };
 
+// Hit group forced into the damage info. Auto lets the hitbox code decide from
+// where the shot landed; every other entry forces that group (values map to
+// the game's EHitGroup enum in the damage hook).
+enum EHitGroupSelect {
+    HitGroupAuto = 0,
+    HitGroupHead = 1,
+    HitGroupHand = 2,
+    HitGroupBody = 3,
+    HitGroupFoot = 4,
+    HitGroupWeakPoint = 5,
+    HitGroupNeck = 6
+};
+
 struct sConfig {
         float Pline;
 		float Bline;
@@ -102,6 +115,7 @@ struct sWeaponAim {
         EAim By;
         float size;
         float Cross;
+        int HitGroup = HitGroupAuto;     // EHitGroupSelect: which hit group shots are reported as
         
          // Frame Rate Controls
         bool FpsLevel;
@@ -217,6 +231,18 @@ sColorsESPBOT sColorsESPBOT{0};
 		bool Kinetic;
         bool CamoTest;
         int CamoTestMode;
+
+        // ---- NEW FEATURES ----
+        bool ReportSpoof;          // true = redirect any incoming report away from you (toward ReportSpoofTargetId)
+        unsigned long long ReportSpoofTargetId = 0;   // account id the outgoing report is redirected to
+        bool RenameCard;           // true = you can rename yourself from the menu using a name card
+        int  RenameCardGid = 0;    // name card gid to use (0 = none equipped)
+        char RenameCardName[32] = {};                 // name written into your own PlayerInfo while RenameCard is on
+        float TuneHitboxHeadBand = 0.35f;             // how far below the head still counts as a headshot (auto hit group)
+        bool A_Fire;               // triggerbot / auto-fire: shoots the moment the aim / fire criteria is met
+        int  A_FireTrigger = 0;    // when A_Fire fires: 0 = always, 1 = only if enemy flanks / is in front, 2 = only if no teammates near crosshair
+        float A_FireDelay = 0.0f;  // min seconds between A_Fire shots; 0 = as fast as the game allows
+        // End of ExtraMenu feature toggles
     };
     sExtraMenu ExtraMenu{0};
 

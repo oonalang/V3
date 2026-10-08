@@ -2,6 +2,7 @@
 #define CONFIGMANAGER_H
 
 #include <string>
+#include <cstring>
 #include <fstream>
 #include <sstream>
 #include <jni.h>
@@ -52,6 +53,7 @@ void LoadConfig() {
         else if (key == "Aim.Target") Config.Aim.Target = static_cast<EAimTarget>(std::stoi(valueStr));
         else if (key == "Aim.Trigger") Config.Aim.Trigger = static_cast<EAimTrigger>(std::stoi(valueStr));
         else if (key == "Aim.By") Config.Aim.By = static_cast<EAim>(std::stoi(valueStr));
+        else if (key == "Aim.HitGroup") Config.Aim.HitGroup = std::stoi(valueStr);
         else if (key == "ExtraMenu.Kinetic") Config.ExtraMenu.Kinetic = (valueStr == "1");
         else if (key == "ExtraMenu.Recoil") Config.ExtraMenu.Recoil = (valueStr == "1");
         else if (key == "ExtraMenu.Spread") Config.ExtraMenu.Spread = (valueStr == "1");
@@ -68,6 +70,18 @@ void LoadConfig() {
         else if (key == "ExtraMenu.Parachute") Config.ExtraMenu.Parachute = (valueStr == "1");
         else if (key == "ExtraMenu.Diving") Config.ExtraMenu.Diving = (valueStr == "1");
         else if (key == "ExtraMenu.WallHack") Config.ExtraMenu.WallHack = (valueStr == "1");
+        else if (key == "ExtraMenu.TuneHitboxHeadBand") Config.ExtraMenu.TuneHitboxHeadBand = std::stof(valueStr);
+        else if (key == "ExtraMenu.A_Fire") Config.ExtraMenu.A_Fire = (valueStr == "1");
+        else if (key == "ExtraMenu.A_FireTrigger") Config.ExtraMenu.A_FireTrigger = std::stoi(valueStr);
+        else if (key == "ExtraMenu.A_FireDelay") Config.ExtraMenu.A_FireDelay = std::stof(valueStr);
+        else if (key == "ExtraMenu.ReportSpoof") Config.ExtraMenu.ReportSpoof = (valueStr == "1");
+        else if (key == "ExtraMenu.ReportSpoofTargetId") Config.ExtraMenu.ReportSpoofTargetId = std::strtoull(valueStr.c_str(), nullptr, 10);
+        else if (key == "ExtraMenu.RenameCard") Config.ExtraMenu.RenameCard = (valueStr == "1");
+        else if (key == "ExtraMenu.RenameCardGid") Config.ExtraMenu.RenameCardGid = std::stoi(valueStr);
+        else if (key == "ExtraMenu.RenameCardName") {
+            std::strncpy(Config.ExtraMenu.RenameCardName, valueStr.c_str(), sizeof(Config.ExtraMenu.RenameCardName) - 1);
+            Config.ExtraMenu.RenameCardName[sizeof(Config.ExtraMenu.RenameCardName) - 1] = '\0';
+        }
     }
     file.close();
 }
@@ -100,6 +114,7 @@ void SaveConfig() {
     file << "Aim.Target " << Config.Aim.Target << "\n";
     file << "Aim.Trigger " << Config.Aim.Trigger << "\n";
     file << "Aim.By " << Config.Aim.By << "\n";
+    file << "Aim.HitGroup " << Config.Aim.HitGroup << "\n";
     file << "ExtraMenu.Kinetic " << Config.ExtraMenu.Kinetic << "\n";
     file << "ExtraMenu.Recoil " << Config.ExtraMenu.Recoil << "\n";
     file << "ExtraMenu.Spread " << Config.ExtraMenu.Spread << "\n";
@@ -116,6 +131,15 @@ void SaveConfig() {
     file << "ExtraMenu.Parachute " << Config.ExtraMenu.Parachute << "\n";
     file << "ExtraMenu.Diving " << Config.ExtraMenu.Diving << "\n";
     file << "ExtraMenu.WallHack " << Config.ExtraMenu.WallHack << "\n";
+    file << "ExtraMenu.TuneHitboxHeadBand " << Config.ExtraMenu.TuneHitboxHeadBand << "\n";
+    file << "ExtraMenu.A_Fire " << Config.ExtraMenu.A_Fire << "\n";
+    file << "ExtraMenu.A_FireTrigger " << Config.ExtraMenu.A_FireTrigger << "\n";
+    file << "ExtraMenu.A_FireDelay " << Config.ExtraMenu.A_FireDelay << "\n";
+    file << "ExtraMenu.ReportSpoof " << Config.ExtraMenu.ReportSpoof << "\n";
+    file << "ExtraMenu.ReportSpoofTargetId " << Config.ExtraMenu.ReportSpoofTargetId << "\n";
+    file << "ExtraMenu.RenameCard " << Config.ExtraMenu.RenameCard << "\n";
+    file << "ExtraMenu.RenameCardGid " << Config.ExtraMenu.RenameCardGid << "\n";
+    file << "ExtraMenu.RenameCardName " << Config.ExtraMenu.RenameCardName << "\n";
     
     file.close();
 }
