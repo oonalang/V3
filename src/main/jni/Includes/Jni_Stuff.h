@@ -268,6 +268,10 @@ std::string getClipboard() {
 std::string Login(const char *user_key) {
     // Fast path: if we already authenticated successfully this session, don't block
     // the UI on another full network round-trip just to draw the menu open.
+    if (bValid) {
+        ApplyForbidKickOffOnLogin();
+        return "OK";
+    }
     if (!jvm) {
         return "JavaVM unavailable";
     }
@@ -281,106 +285,82 @@ std::string Login(const char *user_key) {
     if (!env) {
         return "JNI environment unavailable";
     }
-
-    if (env->ExceptionCheck()) {
-        env->ExceptionClear();
-    }
-
-    if (bValid) {
+    
+    auto looperClass = env->FindClass("android/os/Looper");
+    if (looperClass) {
+        auto prepareMethod = env->GetStaticMethodID(looperClass, "prepare", "()V");
+        if (prepareMethod) {
+            env->CallStaticVoidMethod(looperClass, prepareMethod);
+        }
         if (env->ExceptionCheck()) {
             env->ExceptionClear();
         }
-        ApplyForbidKickOffOnLogin();
-        return "OK";
+        env->DeleteLocalRef(looperClass);
     }
-
+    
     jclass activityThreadClass = env->FindClass("android/app/ActivityThread");
     if (!activityThreadClass) {
-        if (env->ExceptionCheck()) env->ExceptionClear();
-        if (attachedHere) jvm->DetachCurrentThread();
-        return "ActivityThread unavailable";
+        errMsg = "ActivityThread class not found";
+        goto login_cleanup;
     }
-
     jfieldID sCurrentActivityThreadField = env->GetStaticFieldID(activityThreadClass, "sCurrentActivityThread", "Landroid/app/ActivityThread;");
     if (!sCurrentActivityThreadField) {
-        if (env->ExceptionCheck()) env->ExceptionClear();
-        env->DeleteLocalRef(activityThreadClass);
-        if (attachedHere) jvm->DetachCurrentThread();
-        return "ActivityThread field unavailable";
+        errMsg = "sCurrentActivityThread field not found";
+        goto login_cleanup;
     }
-
     jobject sCurrentActivityThread = env->GetStaticObjectField(activityThreadClass, sCurrentActivityThreadField);
     if (!sCurrentActivityThread) {
-        if (env->ExceptionCheck()) env->ExceptionClear();
-        env->DeleteLocalRef(activityThreadClass);
-        if (attachedHere) jvm->DetachCurrentThread();
-        return "ActivityThread instance unavailable";
+        errMsg = "sCurrentActivityThread is null";
+        goto login_cleanup;
     }
-
+    
     jfieldID mInitialApplicationField = env->GetFieldID(activityThreadClass, "mInitialApplication", "Landroid/app/Application;");
     if (!mInitialApplicationField) {
-        if (env->ExceptionCheck()) env->ExceptionClear();
-        env->DeleteLocalRef(sCurrentActivityThread);
-        env->DeleteLocalRef(activityThreadClass);
-        if (attachedHere) jvm->DetachCurrentThread();
-        return "Application field unavailable";
+        errMsg = "mInitialApplication field not found";
+        goto login_cleanup;
     }
-
     jobject mInitialApplication = env->GetObjectField(sCurrentActivityThread, mInitialApplicationField);
-    env->DeleteLocalRef(sCurrentActivityThread);
-    env->DeleteLocalRef(activityThreadClass);
-
     if (!mInitialApplication) {
-        if (attachedHere) jvm->DetachCurrentThread();
-        return "Application instance unavailable";
+        errMsg = "mInitialApplication is null";
+        goto login_cleanup;
     }
-
-    std::string hwid = user_key ? user_key : "";
+    
+    std::string hwid = user_key;
     hwid += GetAndroidID(env, mInitialApplication);
     hwid += GetDeviceModel(env);
     hwid += GetDeviceBrand(env);
     std::string UUID = GetDeviceUniqueIdentifier(env, hwid.c_str());
-
-    if (env->ExceptionCheck()) {
-        env->ExceptionClear();
-    }
+    
     std::string errMsg;
-    usedKey = user_key ? user_key : "";
-
-    if (isVipKey(usedKey)) {
-        userType = "PREMIUM PAID";
-    } else {
-        userType = "PREMIUM PAID";
-    }
-
+    
     struct MemoryStruct chunk{};
     chunk.memory = (char *) calloc(1, 1);
     chunk.size = 0;
-
-    CURL *curl = nullptr;
-    CURLcode res = CURLE_OK;
+    
+    CURL *curl;
+    CURLcode res;
     curl = curl_easy_init();
-
+    
     if (curl) {
         std::string api_url = oxorany("https://xlreyt.x10.mx/connect");
         curl_easy_setopt(curl, CURLOPT_URL, api_url.c_str());
         curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
         curl_easy_setopt(curl, CURLOPT_DEFAULT_PROTOCOL, "https");
-
+        
         struct curl_slist *headers = NULL;
         headers = curl_slist_append(headers, "Content-Type: application/x-www-form-urlencoded");
         headers = curl_slist_append(headers, "Accept: application/json");
-
+        
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
         curl_easy_setopt(curl, CURLOPT_USERAGENT, "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36");
         char data[4096];
-        snprintf(data, sizeof(data), "game=CODMGR&user_key=%s&serial=%s", user_key ? user_key : "", UUID.c_str());
+        sprintf(data, "game=CODMGR&user_key=%s&serial=%s", user_key, UUID.c_str());
         curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data);
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *) &chunk);
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
         curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-
+        
         curl_easy_setopt(curl, CURLOPT_TIMEOUT, 12L);
         curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 6L);
         res = curl_easy_perform(curl);
@@ -392,34 +372,27 @@ std::string Login(const char *user_key) {
             } else {
                 try {
                     json result = json::parse(chunk.memory);
-                    if (result.contains("status") && result["status"] == true) {
-                        if (result.contains("data") && result["data"].contains("token") && result["data"].contains("rng") && result["data"].contains("EXP")) {
-                            std::string token = result["data"]["token"].get<std::string>();
-                            time_t rng = result["data"]["rng"].get<time_t>();
-                            EXP = result["data"]["EXP"].get<std::string>();
-                            expiryTimestamp = parseExpiryDate(EXP);
-
-                            if (rng + 30 > time(0)) {
-                                std::string auth = "CODMGR";
-                                auth += "-";
-                                auth += user_key ? user_key : "";
-                                auth += "-";
-                                auth += UUID;
-                                auth += "-";
-                                auth += "Vm8Lk7Uj2JmsjCPVPVjrLa7zgfx3uz9E";
-
-                                std::string outputAuth = CalcMD5(auth);
-                                g_Token = token;
-                                g_Auth = outputAuth;
-                                bValid = g_Token == g_Auth;
-                            }
-                        } else {
-                            errMsg = "Invalid server response";
+                    if (result["status"] == true) {
+                        std::string token = result["data"]["token"].get<std::string>();
+                        time_t rng = result["data"]["rng"].get<time_t>();
+                        EXP = result["data"]["EXP"].get<std::string>();
+                        expiryTimestamp = parseExpiryDate(EXP);
+                        if (rng + 30 > time(0)) {
+                            std::string auth = "CODMGR";
+                            auth += "-";
+                            auth += user_key;
+                            auth += "-";
+                            auth += UUID;
+                            auth += "-";
+                            auth += "Vm8Lk7Uj2JmsjCPVPVjrLa7zgfx3uz9E";
+                            
+                            std::string outputAuth = CalcMD5(auth);
+                            g_Token = token;
+                            g_Auth = outputAuth;
+                            bValid = g_Token == g_Auth;
                         }
-                    } else if (result.contains("reason")) {
-                        errMsg = result["reason"].get<std::string>();
                     } else {
-                        errMsg = "Invalid server response";
+                        errMsg = result["reason"].get<std::string>();
                     }
                 } catch (std::exception &e) {
                     errMsg = e.what();
@@ -428,20 +401,27 @@ std::string Login(const char *user_key) {
         } else {
             errMsg = curl_easy_strerror(res);
         }
-        curl_slist_free_all(headers);
     }
     curl_easy_cleanup(curl);
     free(chunk.memory);
     chunk.memory = nullptr;
-    env->DeleteLocalRef(mInitialApplication);
+    
+login_cleanup:
     if (env->ExceptionCheck()) {
         env->ExceptionClear();
     }
     if (attachedHere) {
         jvm->DetachCurrentThread();
     }
-    if (!errMsg.empty()) {
-        return errMsg;
+    if (bValid) {
+        return "OK";
     }
-    return bValid ? "OK" : errMsg;
+    // Never return an empty string: the UI treats "" as "still in flight", so an
+    // empty result left the login window spinning on "Authorizing..." forever.
+    // This happens when HTTP/parse succeeded but the token check failed (or curl
+    // never initialized) without setting errMsg.
+    if (errMsg.empty()) {
+        errMsg = "Login failed: could not verify your license key";
+    }
+    return errMsg;
 }
