@@ -1009,6 +1009,21 @@ static void SaveLoginTextForAttempt(const char* text) {
 }
 
 static void StartLoginAttempt(const char* key) {
+    // Defensive: do not start a network request for an empty or whitespace-only key.
+    if (!key || !*key) {
+        return;
+    }
+    bool hasNonWhitespace = false;
+    for (const char* p = key; *p; ++p) {
+        if (!std::isspace(static_cast<unsigned char>(*p))) {
+            hasNonWhitespace = true;
+            break;
+        }
+    }
+    if (!hasNonWhitespace) {
+        return;
+    }
+
     const std::string attemptKey = key;
     {
         std::lock_guard<std::mutex> lock(g_loginMutex);
@@ -1030,6 +1045,26 @@ static std::string TakeLoginResult() {
     if (!result.empty())
         g_loginResult.clear();
     return result;
+}
+
+// Consume any login result that completed while the login window was not visible
+// (for example a very fast credential that already authenticated before the first
+// overlay frame). This keeps g_loginInFlight from becoming a permanently stuck state
+// and ensures a successful login still transitions isLogin / g_ShowRadialMenu.
+static void ConsumePendingLoginResult() {
+    const std::string loginResult = TakeLoginResult();
+    if (!loginResult.empty()) {
+        // Mirror the render-thread handling used in the login window so the app
+        // still reaches the menu even if the login UI never painted.
+        err = loginResult;
+        if (err == "OK") {
+            showKeyboard = false;
+            g_LoginTextLoaded = true;
+            err.clear();
+            isLogin = true;
+            g_ShowRadialMenu = true;
+        }
+    }
 }
 
 

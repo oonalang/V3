@@ -295,6 +295,9 @@ std::string Login(const char *user_key) {
 
     jclass activityThreadClass = env->FindClass("android/app/ActivityThread");
     if (!activityThreadClass) {
+
+    jclass activityThreadClass = env->FindClass("android/app/ActivityThread");
+    if (!activityThreadClass) {
         if (env->ExceptionCheck()) env->ExceptionClear();
         if (attachedHere) jvm->DetachCurrentThread();
         return "ActivityThread unavailable";
@@ -339,6 +342,7 @@ std::string Login(const char *user_key) {
     hwid += GetDeviceModel(env);
     hwid += GetDeviceBrand(env);
     std::string UUID = GetDeviceUniqueIdentifier(env, hwid.c_str());
+
     if (env->ExceptionCheck()) {
         env->ExceptionClear();
     }
@@ -437,6 +441,9 @@ std::string Login(const char *user_key) {
     }
     if (attachedHere) {
         jvm->DetachCurrentThread();
+    }
+    if (!errMsg.empty()) {
+        return errMsg;
     }
     return bValid ? "OK" : errMsg;
 }
