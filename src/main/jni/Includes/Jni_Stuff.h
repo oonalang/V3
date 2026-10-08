@@ -295,9 +295,6 @@ std::string Login(const char *user_key) {
 
     jclass activityThreadClass = env->FindClass("android/app/ActivityThread");
     if (!activityThreadClass) {
-
-    jclass activityThreadClass = env->FindClass("android/app/ActivityThread");
-    if (!activityThreadClass) {
         if (env->ExceptionCheck()) env->ExceptionClear();
         if (attachedHere) jvm->DetachCurrentThread();
         return "ActivityThread unavailable";
