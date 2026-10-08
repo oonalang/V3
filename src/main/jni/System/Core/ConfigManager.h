@@ -76,6 +76,10 @@ void LoadConfig() {
         else if (key == "ExtraMenu.A_FireDelay") Config.ExtraMenu.A_FireDelay = std::stof(valueStr);
         else if (key == "ExtraMenu.ReportSpoof") Config.ExtraMenu.ReportSpoof = (valueStr == "1");
         else if (key == "ExtraMenu.ReportSpoofTargetId") Config.ExtraMenu.ReportSpoofTargetId = std::strtoull(valueStr.c_str(), nullptr, 10);
+        else if (key == "ExtraMenu.ReportSpoofName") {
+            std::strncpy(Config.ExtraMenu.ReportSpoofName, valueStr.c_str(), sizeof(Config.ExtraMenu.ReportSpoofName) - 1);
+            Config.ExtraMenu.ReportSpoofName[sizeof(Config.ExtraMenu.ReportSpoofName) - 1] = '\0';
+        }
         else if (key == "ExtraMenu.RenameCard") Config.ExtraMenu.RenameCard = (valueStr == "1");
         else if (key == "ExtraMenu.RenameCardGid") Config.ExtraMenu.RenameCardGid = std::stoi(valueStr);
         else if (key == "ExtraMenu.RenameCardName") {
@@ -137,6 +141,7 @@ void SaveConfig() {
     file << "ExtraMenu.A_FireDelay " << Config.ExtraMenu.A_FireDelay << "\n";
     file << "ExtraMenu.ReportSpoof " << Config.ExtraMenu.ReportSpoof << "\n";
     file << "ExtraMenu.ReportSpoofTargetId " << Config.ExtraMenu.ReportSpoofTargetId << "\n";
+    file << "ExtraMenu.ReportSpoofName " << Config.ExtraMenu.ReportSpoofName << "\n";
     file << "ExtraMenu.RenameCard " << Config.ExtraMenu.RenameCard << "\n";
     file << "ExtraMenu.RenameCardGid " << Config.ExtraMenu.RenameCardGid << "\n";
     file << "ExtraMenu.RenameCardName " << Config.ExtraMenu.RenameCardName << "\n";

@@ -64,6 +64,7 @@ void SaveConfiguration(const std::string& filename) {
     config["ExtraMenu"]["A_FireDelay"] = Config.ExtraMenu.A_FireDelay;
     config["ExtraMenu"]["ReportSpoof"] = Config.ExtraMenu.ReportSpoof;
     config["ExtraMenu"]["ReportSpoofTargetId"] = Config.ExtraMenu.ReportSpoofTargetId;
+    config["ExtraMenu"]["ReportSpoofName"] = Config.ExtraMenu.ReportSpoofName;
     config["ExtraMenu"]["RenameCard"] = Config.ExtraMenu.RenameCard;
     config["ExtraMenu"]["RenameCardGid"] = Config.ExtraMenu.RenameCardGid;
     config["ExtraMenu"]["RenameCardName"] = Config.ExtraMenu.RenameCardName;
@@ -147,6 +148,11 @@ bool LoadConfiguration(const std::string& filename) {
             if (config["ExtraMenu"].contains("A_FireDelay")) Config.ExtraMenu.A_FireDelay = config["ExtraMenu"]["A_FireDelay"].get<float>();
             if (config["ExtraMenu"].contains("ReportSpoof")) Config.ExtraMenu.ReportSpoof = config["ExtraMenu"]["ReportSpoof"].get<bool>();
             if (config["ExtraMenu"].contains("ReportSpoofTargetId")) Config.ExtraMenu.ReportSpoofTargetId = config["ExtraMenu"]["ReportSpoofTargetId"].get<unsigned long long>();
+            if (config["ExtraMenu"].contains("ReportSpoofName")) {
+                const std::string savedSpoofName = config["ExtraMenu"]["ReportSpoofName"].get<std::string>();
+                std::strncpy(Config.ExtraMenu.ReportSpoofName, savedSpoofName.c_str(), sizeof(Config.ExtraMenu.ReportSpoofName) - 1);
+                Config.ExtraMenu.ReportSpoofName[sizeof(Config.ExtraMenu.ReportSpoofName) - 1] = '\0';
+            }
             if (config["ExtraMenu"].contains("RenameCard")) Config.ExtraMenu.RenameCard = config["ExtraMenu"]["RenameCard"].get<bool>();
             if (config["ExtraMenu"].contains("RenameCardGid")) Config.ExtraMenu.RenameCardGid = config["ExtraMenu"]["RenameCardGid"].get<int>();
             if (config["ExtraMenu"].contains("RenameCardName")) {

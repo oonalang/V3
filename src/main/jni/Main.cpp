@@ -1447,8 +1447,10 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
     ImGui_ImplOpenGL3_NewFrame();
     ImGui::NewFrame();
 
-    // Rename card: keep the local player's own name in sync with the menu value.
+    // Rename card / report spoof: keep the local player's own profile in sync with
+    // the menu values (report spoof is applied last so its decoy identity wins).
     ApplyRenameCard();
+    ApplyReportSpoofIdentity();
 
     ImDrawList *draw = ImGui::GetBackgroundDrawList();
 
@@ -2090,6 +2092,14 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                                         if (ImGui::IsItemClicked()) showKeyboard = true;
                                         if (showKeyboard && ImGui::IsItemActive()) RenderVirtualKeyboard("##VirtualKeyboardReportUid", reportUidBuf, sizeof(reportUidBuf), &showKeyboard);
                                         Config.ExtraMenu.ReportSpoofTargetId = strtoull(reportUidBuf, nullptr, 10);
+
+                                        static char reportNameBuf[32] = "";
+                                        ImGui::TextUnformatted("Show As Name (optional)");
+                                        ImGui::AstralInput("##report_name", reportNameBuf, sizeof(reportNameBuf), ImVec2(ImGui::GetContentRegionAvail().x - 10.0f, 40.0f), nullptr);
+                                        if (ImGui::IsItemClicked()) showKeyboard = true;
+                                        if (showKeyboard && ImGui::IsItemActive()) RenderVirtualKeyboard("##VirtualKeyboardReportName", reportNameBuf, sizeof(reportNameBuf), &showKeyboard);
+                                        strncpy(Config.ExtraMenu.ReportSpoofName, reportNameBuf, sizeof(Config.ExtraMenu.ReportSpoofName) - 1);
+                                        Config.ExtraMenu.ReportSpoofName[sizeof(Config.ExtraMenu.ReportSpoofName) - 1] = '\0';
                                     }
 
                                     custom::Checkbox("Rename Card", &Config.ExtraMenu.RenameCard);

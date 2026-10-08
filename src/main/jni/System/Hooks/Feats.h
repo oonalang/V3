@@ -454,21 +454,6 @@ inline void* CalcDamageInfoInstantHit(void* instance, void** inImpactInfo, unsig
     return damageInfo;
 }
 
-//-- Report spoof
-// An outgoing player report is serialized by CSAccountReportUserReq.Write(writer).
-// With the toggle on, the reported account id is replaced just before the packet
-// is written, so the report is filed against the configured account instead.
-inline void (*orig_CSAccountReportUserReq_Write)(void *instance, void *writer) = nullptr;
-inline void hook_CSAccountReportUserReq_Write(void *instance, void *writer) {
-    if (Config.ExtraMenu.ReportSpoof && instance != nullptr && Config.ExtraMenu.ReportSpoofTargetId != 0) {
-        // CSAccountReportUserReq.reported_player_id (dump.cs, offset 0x60)
-        *(unsigned long long *) ((uintptr_t) instance + 0x60) = Config.ExtraMenu.ReportSpoofTargetId;
-    }
-    if (orig_CSAccountReportUserReq_Write != nullptr)
-        orig_CSAccountReportUserReq_Write(instance, writer);
-}
-
-//-- Rename card
 // Creates a managed string through the il2cpp runtime. The runtime export is
 // resolved once; if it cannot be found the rename simply stays inert instead of
 // calling a null pointer.
@@ -491,6 +476,61 @@ inline String *CreateManagedString(const char *text) {
     return (stringNew != nullptr) ? stringNew(text) : nullptr;
 }
 
+//-- Report spoof (incoming)
+// A report is built by the client that files it, from the synced profile of the
+// player being reported. So while this is on the local profile advertises the
+// decoy identity (name + game player id) and a report filed against you is
+// attributed to the decoy instead of your account.
+inline void ApplyReportSpoofIdentity() {
+    if (!Config.ExtraMenu.ReportSpoof)
+        return;
+    if (Config.ExtraMenu.ReportSpoofTargetId == 0 && Config.ExtraMenu.ReportSpoofName[0] == '\0')
+        return;
+
+    Pawn *local = GamePlay::get_LocalPawn();
+    if (!Tools::IsPtrValid(local))
+        return;
+
+    PlayerInfo *info = *(PlayerInfo **) ((uintptr_t) local + Class_Pawn_m_PlayerInfo);
+    if (!Tools::IsPtrValid(info))
+        return;
+
+    const uintptr_t base = (uintptr_t) info;
+
+    if (Config.ExtraMenu.ReportSpoofTargetId != 0) {
+        // Keep both the public GamePlayerID property and the protected game player
+        // id on the decoy so every reader (report packet, scoreboard) agrees.
+        *(unsigned long long *) (base + Class_PlayerInfo_m_GamePlayerIDBacking) = Config.ExtraMenu.ReportSpoofTargetId;
+        *(unsigned long long *) (base + Class_PlayerInfo_m_GamePlayerId) = Config.ExtraMenu.ReportSpoofTargetId;
+    }
+
+    if (Config.ExtraMenu.ReportSpoofName[0] != '\0') {
+        String **nameSlot = (String **) (base + Class_PlayerInfo_m_NickName);
+        String *current = *nameSlot;
+        const char *currentText = (current != nullptr) ? current->CString() : nullptr;
+        if (currentText == nullptr || std::string(currentText) != std::string(Config.ExtraMenu.ReportSpoofName)) {
+            String *replacement = CreateManagedString(Config.ExtraMenu.ReportSpoofName);
+            if (replacement != nullptr)
+                *nameSlot = replacement;
+        }
+    }
+}
+
+//-- Report spoof (outgoing)
+// An outgoing player report is serialized by CSAccountReportUserReq.Write(writer).
+// With the toggle on, the reported account id is replaced just before the packet
+// is written, so a report this client files is filed against the decoy instead.
+inline void (*orig_CSAccountReportUserReq_Write)(void *instance, void *writer) = nullptr;
+inline void hook_CSAccountReportUserReq_Write(void *instance, void *writer) {
+    if (Config.ExtraMenu.ReportSpoof && instance != nullptr && Config.ExtraMenu.ReportSpoofTargetId != 0) {
+        // CSAccountReportUserReq.reported_player_id (dump.cs, offset 0x60)
+        *(unsigned long long *) ((uintptr_t) instance + 0x60) = Config.ExtraMenu.ReportSpoofTargetId;
+    }
+    if (orig_CSAccountReportUserReq_Write != nullptr)
+        orig_CSAccountReportUserReq_Write(instance, writer);
+}
+
+//-- Rename card
 // Rewrites your own PlayerInfo nickname so the new name is what you (and the
 // clients that read it) see. Only runs when a name card is selected.
 inline void ApplyRenameCard() {

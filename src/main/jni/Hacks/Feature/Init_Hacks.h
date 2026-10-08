@@ -234,7 +234,8 @@ sColorsESPBOT sColorsESPBOT{0};
 
         // ---- NEW FEATURES ----
         bool ReportSpoof;          // true = redirect any incoming report away from you (toward ReportSpoofTargetId)
-        unsigned long long ReportSpoofTargetId = 0;   // account id the outgoing report is redirected to
+        unsigned long long ReportSpoofTargetId = 0;   // decoy account id: what your profile advertises and where your own reports point
+        char ReportSpoofName[32] = {};                // decoy display name shown while ReportSpoof is on (empty = keep your name)
         bool RenameCard;           // true = you can rename yourself from the menu using a name card
         int  RenameCardGid = 0;    // name card gid to use (0 = none equipped)
         char RenameCardName[32] = {};                 // name written into your own PlayerInfo while RenameCard is on

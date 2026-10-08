@@ -160,6 +160,8 @@ void UpdateAllOffset(){
 #define Class_Pawn_m_Mesh (0x628)
 #define Class_Pawn_m_HeadBone (0x308)
 #define Class_PlayerInfo_m_NickName (0x160)
+#define Class_PlayerInfo_m_GamePlayerId (0x168)          // protected ulong m_GamePlayerId
+#define Class_PlayerInfo_m_GamePlayerIDBacking (0x108)   // <GamePlayerID>k__BackingField
 #define Class_AttackableTarget_m_AttackableInfo (0x78)
 #define Class_AttackableTarget_m_Health (0x34)
 #define Class_AttackableTarget_m_MaxHealth (0x38)
