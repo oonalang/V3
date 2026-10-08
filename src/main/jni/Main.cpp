@@ -1003,6 +1003,7 @@ static std::mutex  g_loginMutex;
 static float g_loginStart = 0.0f;
 static bool g_loginInFlight = false;
 
+static bool g_ShowRadialMenu = true;
 static void SaveLoginTextForAttempt(const char* text) {
     strncpy(logintext, text, sizeof(logintext) - 1);
     logintext[sizeof(logintext) - 1] = '\0';
@@ -1075,7 +1076,6 @@ uintptr_t g_il2cpp;
 static bool isMenuVisible = true;
 
 // ================= PIZZA MENU  =================
-static bool g_ShowRadialMenu = true;
 
 int TABG = 1;
 
