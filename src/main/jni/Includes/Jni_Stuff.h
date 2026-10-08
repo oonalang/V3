@@ -298,42 +298,51 @@ std::string Login(const char *user_key) {
         env->DeleteLocalRef(looperClass);
     }
     
-    jclass activityThreadClass = env->FindClass("android/app/ActivityThread");
+    // Declared up front: every goto login_cleanup below is reached before the
+    // original declarations, and C++ forbids a goto jumping over non-trivial
+    // initialization (clang rejects the jump even for the JNI pointer locals).
+    jclass activityThreadClass = nullptr;
+    jfieldID sCurrentActivityThreadField = nullptr;
+    jobject sCurrentActivityThread = nullptr;
+    jfieldID mInitialApplicationField = nullptr;
+    jobject mInitialApplication = nullptr;
+    std::string hwid;
+    std::string UUID;
+    std::string errMsg;
+    struct MemoryStruct chunk{};
+    activityThreadClass = env->FindClass("android/app/ActivityThread");
     if (!activityThreadClass) {
         errMsg = "ActivityThread class not found";
         goto login_cleanup;
     }
-    jfieldID sCurrentActivityThreadField = env->GetStaticFieldID(activityThreadClass, "sCurrentActivityThread", "Landroid/app/ActivityThread;");
+    sCurrentActivityThreadField = env->GetStaticFieldID(activityThreadClass, "sCurrentActivityThread", "Landroid/app/ActivityThread;");
     if (!sCurrentActivityThreadField) {
         errMsg = "sCurrentActivityThread field not found";
         goto login_cleanup;
     }
-    jobject sCurrentActivityThread = env->GetStaticObjectField(activityThreadClass, sCurrentActivityThreadField);
+    sCurrentActivityThread = env->GetStaticObjectField(activityThreadClass, sCurrentActivityThreadField);
     if (!sCurrentActivityThread) {
         errMsg = "sCurrentActivityThread is null";
         goto login_cleanup;
     }
     
-    jfieldID mInitialApplicationField = env->GetFieldID(activityThreadClass, "mInitialApplication", "Landroid/app/Application;");
+    mInitialApplicationField = env->GetFieldID(activityThreadClass, "mInitialApplication", "Landroid/app/Application;");
     if (!mInitialApplicationField) {
         errMsg = "mInitialApplication field not found";
         goto login_cleanup;
     }
-    jobject mInitialApplication = env->GetObjectField(sCurrentActivityThread, mInitialApplicationField);
+    mInitialApplication = env->GetObjectField(sCurrentActivityThread, mInitialApplicationField);
     if (!mInitialApplication) {
         errMsg = "mInitialApplication is null";
         goto login_cleanup;
     }
     
-    std::string hwid = user_key;
+    hwid = user_key;
     hwid += GetAndroidID(env, mInitialApplication);
     hwid += GetDeviceModel(env);
     hwid += GetDeviceBrand(env);
-    std::string UUID = GetDeviceUniqueIdentifier(env, hwid.c_str());
+    UUID = GetDeviceUniqueIdentifier(env, hwid.c_str());
     
-    std::string errMsg;
-    
-    struct MemoryStruct chunk{};
     chunk.memory = (char *) calloc(1, 1);
     chunk.size = 0;
     

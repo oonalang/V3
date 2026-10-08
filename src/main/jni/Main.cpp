@@ -2180,7 +2180,9 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                                         ImGui::SetItemTooltip("so you are not kicked for multi-device.");
                                     }
                                     custom::Separator_line();
-                                    
+                                    EndContentChild(right);
+                                }
+                                custom::EndGroup();
                             }
 
                             if (runtimeState.activeTab == 4)   // SKINS
