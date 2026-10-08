@@ -323,16 +323,6 @@ int PollUnicodeChars() {
     jvm->DetachCurrentThread();
     return result;
 }std::string Login(const char *user_key) {
-    if (env->ExceptionCheck()) {
-        env->ExceptionClear();
-    }
-
-    if (bValid) {
-        if (env->ExceptionCheck()) {
-            env->ExceptionClear();
-        }
-        return "OK";
-    }
     if (!jvm) {
         return "JavaVM unavailable";
     }
@@ -345,6 +335,16 @@ int PollUnicodeChars() {
     }
     if (!env) {
         return "JNI environment unavailable";
+    }
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+    }
+
+    if (bValid) {
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+        }
+        return "OK";
     }
 
     jclass activityThreadClass = env->FindClass("android/app/ActivityThread");
