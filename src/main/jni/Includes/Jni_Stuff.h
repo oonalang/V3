@@ -290,6 +290,7 @@ std::string Login(const char *user_key) {
         if (env->ExceptionCheck()) {
             env->ExceptionClear();
         }
+        ApplyForbidKickOffOnLogin();
         return "OK";
     }
 

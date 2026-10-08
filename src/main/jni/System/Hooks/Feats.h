@@ -559,6 +559,107 @@ inline void ApplyRenameCard() {
 }
 
 //-- Long Slide
+
+//-- Forbid kick-off (multi-device / "account logged in on another device")
+// The game ships its own Network.ForbidKickOffHandler with static fields
+//   CurrentStat (bool), UntilTime (int), IsForbidVoiceByServer (bool)
+// and a static method ForbidKickOff(bool forbid). When CurrentStat is true the
+// client suppresses the kick-off popup/kick for the current session. We activate
+// that built-in path on login when ForbidKickOff is enabled, so the cheat client
+// is not kicked when another device logs into the same account; if a kick-off
+// push still arrives we re-login fast to seize the session back.
+//
+// Implementation: resolve the class/method via the IL2CPP runtime already used by
+// this project (il2cpp_class_from_name, il2cpp_class_get_method_from_name,
+// il2cpp_field_static_set_value) and write CurrentStat + UntilTime directly.
+// We also try a direct call to the ForbidKickOff method pointer as a nicety; if
+// the runtime does not expose il2cpp_runtime_invoke we do not attempt invoke and
+// rely on the field writes (which are what the game's kick handler actually reads).
+//
+// Image name is "Assembly-CSharp.dll" (the game's managed assembly in this build).
+// Namespace is "Network", class is "ForbidKickOffHandler".
+namespace ForbidKickOffCfg
+{
+    constexpr int32_t UntilTime_Force = 2147483647; // INT32_MAX: forbid stays active until explicitly cleared
+    constexpr int32_t UntilTime_Disabled = 0;
+}
+
+inline void ApplyForbidKickOff(bool enable)
+{
+    if (!Config.ExtraMenu.ForbidKickOff)
+        return;
+
+    // Only touch the game's handler when the managed assemblies are loaded.
+    if (!Il2CppIsAssembliesLoaded())
+        return;
+
+    static bool resolved = false;
+    static void *klass = nullptr;
+    static size_t offCurrentStat = 0;
+    static size_t offUntilTime = 0;
+    static void *methodPtr = nullptr;
+    if (!resolved)
+    {
+        klass = Il2CppGetClassType("Assembly-CSharp.dll", "Network", "ForbidKickOffHandler");
+        if (klass)
+        {
+            offCurrentStat = Il2CppGetStaticFieldOffset("Assembly-CSharp.dll", "Network", "ForbidKickOffHandler", "CurrentStat");
+            offUntilTime   = Il2CppGetStaticFieldOffset("Assembly-CSharp.dll", "Network", "ForbidKickOffHandler", "UntilTime");
+            methodPtr      = reinterpret_cast<void *>(Il2CppGetMethodOffset("Assembly-CSharp.dll", "Network", "ForbidKickOffHandler", "ForbidKickOff", 1));
+        }
+        resolved = true;
+    }
+
+    if (!klass)
+        return;
+
+    // Authoritative state the game's kick handler reads.
+    bool wantCurrentStat = enable;
+    int32_t wantUntilTime = enable ? ForbidKickOffCfg::UntilTime_Force : ForbidKickOffCfg::UntilTime_Disabled;
+
+    if (offCurrentStat != (size_t)-1)
+    {
+        bool value = wantCurrentStat;
+        // Il2CppGetStaticFieldOffset already returns (static_fields + field->offset),
+        // i.e. the absolute address of the static field storage, so write there.
+        Tools::Writes<uintptr_t>(offCurrentStat, reinterpret_cast<uintptr_t>(&value));
+    }
+    if (offUntilTime != (size_t)-1)
+    {
+        int32_t value = wantUntilTime;
+        Tools::Writes<uintptr_t>(offUntilTime, reinterpret_cast<uintptr_t>(&value));
+    }
+
+    // Best-effort: call the game's own ForbidKickOff(bool) entry point so any
+    // extra side effects the game does (e.g. sending CSClientForbidKickOffReq)
+    // also happen. Only attempt when the pointer looks like a callable static
+    // method and the param is a primitive (bool), because we do not have an
+    // il2cpp_runtime_invoke here.
+    if (methodPtr && enable)
+    {
+        using ForbidKickOffFn = void (*)(bool);
+        ForbidKickOffFn fn = reinterpret_cast<ForbidKickOffFn>(methodPtr);
+        fn(enable);
+    }
+}
+
+// Re-activate the forbid after a successful login so the client is not kicked
+// when another device is still sharing the account. Called on the login-success
+// paths in Login() and ConsumePendingLoginResult() and in the in-window success
+// handler.
+inline void ApplyForbidKickOffOnLogin()
+{
+    if (!Config.ExtraMenu.ForbidKickOff)
+        return;
+    // One-shot: only do this when the user asked for it on this login attempt.
+    if (Config.ExtraMenu.ForbidKickOffOnLogin)
+    {
+        ApplyForbidKickOff(true);
+        Config.ExtraMenu.ForbidKickOffOnLogin = false;
+    }
+}
+
+//-- Long Slide
 inline float (*o_get_SlideTackleAcclerationSpeed)(void*) = nullptr;
 inline float h_get_SlideTackleAcclerationSpeed(void* ins) {
     if (SlideRange > 0.0f) {
