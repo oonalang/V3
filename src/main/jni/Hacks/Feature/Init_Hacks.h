@@ -216,6 +216,7 @@ sColorsESPBOT sColorsESPBOT{0};
 		bool RedWallhack;
     	bool Spread;
     	bool Fire;
+        bool NoSprintFireDelay;                        // true = sprinting no longer delays the first shot (separate from Firerate)
     	bool Diving;
         bool Recoil;
         bool Reload;

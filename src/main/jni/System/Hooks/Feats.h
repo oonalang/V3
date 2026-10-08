@@ -183,7 +183,9 @@ inline float get_FireInterval(void * instance) {
 inline float (*orig_get_DelaySprintFire)(void *) = nullptr;
 inline float get_DelaySprintFire(void * instance) {
     if (instance != NULL) {
-        if (Config.ExtraMenu.Fire) {
+        // No Sprint-Fire Delay is its own toggle so it can be used without the
+        // firerate change; turning Firerate on still zeroes it as before.
+        if (Config.ExtraMenu.NoSprintFireDelay || Config.ExtraMenu.Fire) {
             return 0.00001f;
         }
     }

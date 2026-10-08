@@ -67,6 +67,7 @@ void LoadConfig() {
         else if (key == "ExtraMenu.HitboxScale") Config.ExtraMenu.HitboxScale = std::stof(valueStr);
         else if (key == "ExtraMenu.NoCrouch") Config.ExtraMenu.NoCrouch = (valueStr == "1");
         else if (key == "ExtraMenu.Fire") Config.ExtraMenu.Fire = (valueStr == "1");
+        else if (key == "ExtraMenu.NoSprintFireDelay") Config.ExtraMenu.NoSprintFireDelay = (valueStr == "1");
         else if (key == "ExtraMenu.Parachute") Config.ExtraMenu.Parachute = (valueStr == "1");
         else if (key == "ExtraMenu.Diving") Config.ExtraMenu.Diving = (valueStr == "1");
         else if (key == "ExtraMenu.WallHack") Config.ExtraMenu.WallHack = (valueStr == "1");
@@ -134,6 +135,7 @@ void SaveConfig() {
     file << "ExtraMenu.HitboxScale " << Config.ExtraMenu.HitboxScale << "\n";
     file << "ExtraMenu.NoCrouch " << Config.ExtraMenu.NoCrouch << "\n";
     file << "ExtraMenu.Fire " << Config.ExtraMenu.Fire << "\n";
+    file << "ExtraMenu.NoSprintFireDelay " << Config.ExtraMenu.NoSprintFireDelay << "\n";
     file << "ExtraMenu.Parachute " << Config.ExtraMenu.Parachute << "\n";
     file << "ExtraMenu.Diving " << Config.ExtraMenu.Diving << "\n";
     file << "ExtraMenu.WallHack " << Config.ExtraMenu.WallHack << "\n";

@@ -1400,6 +1400,184 @@ namespace ModernUI {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Panic mode
+// Each tab gets a PANIC button that switches the features living on that tab
+// back off. Flipping the flags is enough for everything the hooks read every
+// frame; the values that are "active while > 0/1" (multipliers, slide distance,
+// hitbox scale, ...) are reset to their neutral value so the hooks really go
+// idle again. Memory patches (WallHack / NoCrouch) are restored by the
+// per-frame patch sync lower down and A-Fire releases any trigger it holds.
+// ---------------------------------------------------------------------------
+inline void PanicVisualTab()
+{
+    Config.ESPMenu.isPlayerLine = false;
+    Config.ESPMenu.Box = false;
+    Config.ESPMenu.Skeleton = false;
+    Config.ESPMenu.Health = false;
+    Config.ESPMenu.Name = false;
+    Config.ESPMenu.Distance = false;
+    Config.ESPMenu.Count = false;
+    Config.ESPMenu.Alert = false;
+    Config.ESPMenu.Aimline = false;
+    Config.ESPMenu.ShowFov = false;
+    Config.ESPMenu.Crosshair = false;
+    Config.ESPMenu.Signal = false;
+    Config.ESPMenu.Armor = false;
+    Config.ESPMenu.GrenadeWarn = false;
+    Config.ESPMenu.BRClass = false;
+    Config.ESPMenu.Vehicle = false;
+    Config.ESPMenu.VehicleHealth = false;
+    Config.ExtraMenu.WallHack = false;
+    Config.ExtraMenu.RedWallhack = false;
+}
+
+inline void PanicCombatTab()
+{
+    Config.Aim.Aimbot360 = false;
+    Config.Aim.AimSilent = false;
+    Config.Aim.AimAssistSize = 0.0f;
+    Config.Aim.Cross = 0.0f;
+    Config.Aim.Target = EAimTarget::Heads;
+    Config.Aim.Trigger = EAimTrigger::None;
+    Config.Aim.By = EAim::Distance;
+    Config.Aim.HitGroup = HitGroupAuto;
+    AimSmooth = 1.0f;
+    Config.ExtraMenu.A_Fire = false;
+    Config.ExtraMenu.A_FireTrigger = 0;
+    Config.ExtraMenu.A_FireDelay = 0.0f;
+    A_FireReleaseTrigger(nullptr);   // let go of the trigger right away
+}
+
+inline void PanicMemoryTab()
+{
+    Config.ExtraMenu.Hit = false;
+    Config.ExtraMenu.HitboxScale = 3.0f;          // back to the struct default
+    Config.ExtraMenu.TuneHitboxHeadBand = 0.35f;
+    Config.ExtraMenu.Recoil = false;
+    Config.ExtraMenu.Spread = false;
+    Config.ExtraMenu.Shake = false;
+    Config.ExtraMenu.Rpd = false;
+    Config.ExtraMenu.Parachute = false;
+    Config.ExtraMenu.Flash = false;
+    Config.ExtraMenu.Fire = false;
+    Config.ExtraMenu.NoSprintFireDelay = false;
+    Config.ExtraMenu.Diving = false;
+    Config.ExtraMenu.Reload = false;
+    Config.ExtraMenu.Scope = false;
+    Config.ExtraMenu.Switch = false;
+    Config.ExtraMenu.Kinetic = false;
+    Config.ExtraMenu.NoCrouch = false;            // its patch is restored by the sync loop
+    SnowBsize = 0.0f;
+    SlideRange = 0.0f;
+    speedHackMultiplier = 1.0f;
+    jumpHeightMultiplier = 1.0f;
+    Config.ExtraMenu.ReportSpoof = false;
+    Config.ExtraMenu.RenameCard = false;
+    Config.ExtraMenu.ForbidKickOff = false;
+    Config.ExtraMenu.ForbidKickOffOnLogin = false;
+}
+
+inline void PanicSkinTab()
+{
+    // The skin tab keeps its picks in sBool plus the active-effect maps, so
+    // clearing them drops every pending selection. Camo that already reached the
+    // game data is put back through RestoreCamo().
+    sBool.clear();
+    activeKillEffects.clear();
+    activeBulletTrackEffects.clear();
+    activeWeaponFireEffects.clear();
+    activeWeaponBrocast.clear();
+    activeVehicleSkins.clear();
+    activeVehicleSkinsById.clear();
+    activeVehicleSkinConfs.clear();
+    Config.ExtraMenu.CamoTest = false;
+    Config.ExtraMenu.CamoTestMode = 0;
+    RestoreCamo();
+    Config.ExtraMenu.Blueprints = false;
+    Config.ExtraMenu.Attachment = false;
+}
+
+inline void PanicMiscTab()
+{
+    Config.ExtraMenu.ClearTerrain = false;
+    Config.ExtraMenu.NoSmoke = false;
+    Config.ExtraMenu.WalkUnderWater = false;
+    Config.ExtraMenu.CameraPov = false;
+    Config.ExtraMenu.CameraPovSize = 0.0f;
+    Config.ExtraMenu.Spectatex = false;
+    Config.ExtraMenu.UnliAmmo = false;
+    Config.ExtraMenu.NoGravity = false;
+    Config.ExtraMenu.NoGravityScale = 1.0f;
+}
+
+inline void PanicSettingsTab()
+{
+    // Clear Display is the menu's own overlay preference (hidden by default), so
+    // it is deliberately left untouched here.
+    Config.ExtraMenu.Grap = false;
+    Config.Aim.FpsLevel = false;
+    Config.Aim.showFPSLevelSlider = false;
+    Config.Aim.FpsLevelUltra = false;
+    Config.Aim.showFPSLevelUltraSlider = false;
+    Config.ExtraMenu.ResetGuest = false;
+    Config.ExtraMenu.ForbidKickOff = false;
+    Config.ExtraMenu.ForbidKickOffOnLogin = false;
+}
+
+inline void PanicAllTabs()
+{
+    PanicVisualTab();
+    PanicCombatTab();
+    PanicMemoryTab();
+    PanicSkinTab();
+    PanicMiscTab();
+    PanicSettingsTab();
+}
+
+// The PANIC row that sits above every tab: the left button clears the tab you
+// are on, the right one clears everything.
+inline void DrawTabPanicBar(int activeTab)
+{
+    const char *tabName = nullptr;
+    void (*panicFn)() = nullptr;
+    switch (activeTab) {
+        case 1: tabName = "VISUAL";   panicFn = PanicVisualTab;   break;
+        case 2: tabName = "COMBAT";   panicFn = PanicCombatTab;   break;
+        case 3: tabName = "MEMORY";   panicFn = PanicMemoryTab;   break;
+        case 4: tabName = "SKINS";    panicFn = PanicSkinTab;     break;
+        case 5: tabName = "MISC";     panicFn = PanicMiscTab;     break;
+        case 6: tabName = "SETTINGS"; panicFn = PanicSettingsTab; break;
+        default: return;
+    }
+
+    char label[64];
+    std::snprintf(label, sizeof(label), "TURN OFF ALL (%s)", tabName);
+
+    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+    ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.545f, 0.110f, 0.129f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.678f, 0.141f, 0.165f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.412f, 0.078f, 0.094f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(1.000f, 0.925f, 0.925f, 1.00f));
+
+    const float panicRowW = ImMax(1.0f, ImGui::GetContentRegionAvail().x);
+    if (ImGui::Button(label, ImVec2(panicRowW * 0.55f, 32.0f)) && panicFn != nullptr)
+        panicFn();
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Panic: turns every feature on this tab off and restores what it patched.");
+
+    ImGui::SameLine(0.0f, 8.0f);
+
+    if (ImGui::Button("PANIC ALL", ImVec2(ImMax(1.0f, ImGui::GetContentRegionAvail().x), 32.0f)))
+        PanicAllTabs();
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Panic: turns every feature on every tab off.");
+
+    ImGui::PopStyleColor(4);
+    ImGui::PopStyleVar();
+    ImGui::Dummy(ImVec2(0.0f, 4.0f));
+}
+
 EGLBoolean (*old_eglSwapBuffers)(EGLDisplay dpy, EGLSurface surface);
 EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
 {
@@ -1995,8 +2173,11 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                             ImGui::PushStyleVar(ImGuiStyleVar_Alpha, runtimeState.tabAlpha * runtimeStyle->Alpha);
 
                             const ImVec2 contentRegion = ImGui::GetContentRegionAvail();
-                            const float childHeight = ImMax(0.0f, contentRegion.y);
                             const float childWidth = ImMax(0.0f, (contentRegion.x - columnGap) * 0.5f);
+
+                            // Panic row: clears the current tab (or every tab).
+                            DrawTabPanicBar(runtimeState.activeTab);
+                            const float childHeight = ImMax(0.0f, ImGui::GetContentRegionAvail().y);
 
                             if (runtimeState.activeTab == 1)   // VISUAL
                             {
@@ -2109,6 +2290,7 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                                     custom::Checkbox("No Parachute", &Config.ExtraMenu.Parachute);
                                     custom::Checkbox("Anti Flashbang", &Config.ExtraMenu.Flash);
                                     custom::Checkbox("Firerate", &Config.ExtraMenu.Fire);
+                                    custom::Checkbox("No Sprint-Fire Delay", &Config.ExtraMenu.NoSprintFireDelay);
                                     custom::Checkbox("Fast Dive", &Config.ExtraMenu.Diving);
                                     custom::Checkbox("Fast Reload", &Config.ExtraMenu.Reload);
                                     custom::Checkbox("Fast Scope", &Config.ExtraMenu.Scope);
