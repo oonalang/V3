@@ -220,6 +220,9 @@ namespace settings_tab
     inline void RenderEnhancementCard()
     {
         custom::Checkbox("Clear Display", &Config.ExtraMenu.ClearDisplay);
+        custom::Checkbox("Forbid Kick-Off", &Config.ExtraMenu.ForbidKickOff);
+        if (Config.ExtraMenu.ForbidKickOff)
+            custom::Checkbox("Forbid On Login", &Config.ExtraMenu.ForbidKickOffOnLogin);
         custom::Checkbox("VSync Mode", &Config.ExtraMenu.Grap);
         if (custom::Checkbox("Frame Smoothness", &Config.Aim.FpsLevel)) {
             Config.Aim.showFPSLevelSlider = Config.Aim.FpsLevel;

@@ -239,6 +239,8 @@ sColorsESPBOT sColorsESPBOT{0};
         bool RenameCard;           // true = you can rename yourself from the menu using a name card
         int  RenameCardGid = 0;    // name card gid to use (0 = none equipped)
         char RenameCardName[32] = {};                 // name written into your own PlayerInfo while RenameCard is on
+        bool ForbidKickOff;                            // true = suppress the "account logged in on another device" kick-off so you can solo accounts
+        bool ForbidKickOffOnLogin;                      // one-shot: when true, activate ForbidKickOff on the next successful login then clear it
         float TuneHitboxHeadBand = 0.35f;             // how far below the head still counts as a headshot (auto hit group)
         bool A_Fire;               // triggerbot / auto-fire: shoots the moment the aim / fire criteria is met
         int  A_FireTrigger = 0;    // when A_Fire fires: 0 = always, 1 = only if enemy flanks / is in front, 2 = only if no teammates near crosshair

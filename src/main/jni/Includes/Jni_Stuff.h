@@ -269,6 +269,7 @@ std::string Login(const char *user_key) {
     // Fast path: if we already authenticated successfully this session, don't block
     // the UI on another full network round-trip just to draw the menu open.
     if (bValid) {
+        ApplyForbidKickOffOnLogin();
         return "OK";
     }
     if (!jvm) {

@@ -1064,6 +1064,7 @@ static void ConsumePendingLoginResult() {
             err.clear();
             isLogin = true;
             g_ShowRadialMenu = true;
+            ApplyForbidKickOffOnLogin();
         }
     }
 }
@@ -1775,6 +1776,7 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                         // WALANG LOADING — deretso sa pizza menu
                         isLogin = true;
                         g_ShowRadialMenu = true;
+                        ApplyForbidKickOffOnLogin();
                     }
                 }
 
@@ -2154,9 +2156,23 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                                         if (showKeyboard && ImGui::IsItemActive()) RenderVirtualKeyboard("##VirtualKeyboardRenameGid", renameCardGidBuf, sizeof(renameCardGidBuf), &showKeyboard);
                                         Config.ExtraMenu.RenameCardGid = atoi(renameCardGidBuf);
                                     }
-                                    EndContentChild(right);
-                                }
-                                custom::EndGroup();
+
+                                    custom::Separator_line();
+                                    custom::Checkbox("Forbid Kick-Off", &Config.ExtraMenu.ForbidKickOff);
+                                    if (Config.ExtraMenu.ForbidKickOff)
+                                    {
+                                        ImGui::Indent(12.0f);
+                                        ImGui::TextColored(c::text::text, "Keep playing when the same account logs in elsewhere");
+                                        ImGui::TextUnformatted("instead of being kicked / getting the");
+                                        ImGui::TextUnformatted("logged in on a new device popup.");
+                                        ImGui::Unindent(12.0f);
+                                        custom::Checkbox("Forbid On Login", &Config.ExtraMenu.ForbidKickOffOnLogin);
+                                        ImGui::SetItemTooltip("When enabled, the next successful login");
+                                        ImGui::SetItemTooltip("activates the game's own forbid-kick-off");
+                                        ImGui::SetItemTooltip("so you are not kicked for multi-device.");
+                                    }
+                                    custom::Separator_line();
+                                    
                             }
 
                             if (runtimeState.activeTab == 4)   // SKINS

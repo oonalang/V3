@@ -86,6 +86,8 @@ void LoadConfig() {
             std::strncpy(Config.ExtraMenu.RenameCardName, valueStr.c_str(), sizeof(Config.ExtraMenu.RenameCardName) - 1);
             Config.ExtraMenu.RenameCardName[sizeof(Config.ExtraMenu.RenameCardName) - 1] = '\0';
         }
+        else if (key == "ExtraMenu.ForbidKickOff") Config.ExtraMenu.ForbidKickOff = (valueStr == "1");
+        else if (key == "ExtraMenu.ForbidKickOffOnLogin") Config.ExtraMenu.ForbidKickOffOnLogin = (valueStr == "1");
     }
     file.close();
 }
@@ -144,7 +146,8 @@ void SaveConfig() {
     file << "ExtraMenu.ReportSpoofName " << Config.ExtraMenu.ReportSpoofName << "\n";
     file << "ExtraMenu.RenameCard " << Config.ExtraMenu.RenameCard << "\n";
     file << "ExtraMenu.RenameCardGid " << Config.ExtraMenu.RenameCardGid << "\n";
-    file << "ExtraMenu.RenameCardName " << Config.ExtraMenu.RenameCardName << "\n";
+    file << "ExtraMenu.ForbidKickOff " << Config.ExtraMenu.ForbidKickOff << "\n";
+    file << "ExtraMenu.ForbidKickOffOnLogin " << Config.ExtraMenu.ForbidKickOffOnLogin << "\n";
     
     file.close();
 }
