@@ -9,6 +9,7 @@
 #include <iomanip>
 #include <sstream>
 #include <ctime>
+#include <android/log.h>
 
 using json = nlohmann::json;
 extern JavaVM* jvm;
@@ -143,6 +144,126 @@ static size_t WriteMemoryCallback(void *contents, size_t size, size_t nmemb, voi
     mem->size += realsize;
     mem->memory[mem->size] = 0;
     return realsize;
+}
+
+// The licence host answers refusals (403) with an HTML block page. Its text is
+// the only thing that says *why* the request was refused, so the login label
+// shows a short hint taken from it instead of a bare status code.
+inline std::string ExtractResponseHint(const std::string &body)
+{
+    std::string text;
+    bool inTag = false;
+    for (char c : body) {
+        if (c == '<') { inTag = true; continue; }
+        if (c == '>') { inTag = false; text += ' '; continue; }
+        if (inTag) continue;
+        text += c;
+    }
+
+    std::string out;
+    bool lastWasSpace = true;
+    for (char c : text) {
+        const bool isSpace = (c == ' ' || c == '\t' || c == '\n' || c == '\r');
+        if (isSpace) {
+            if (!lastWasSpace) out += ' ';
+        } else {
+            out += c;
+        }
+        lastWasSpace = isSpace;
+    }
+    while (!out.empty() && out.front() == ' ') out.erase(out.begin());
+    while (!out.empty() && out.back() == ' ') out.pop_back();
+    if (out.size() > 90) out = out.substr(0, 90) + "...";
+    return out;
+}
+
+struct LicenceHttpResult {
+    long status;
+    CURLcode code;
+    std::string body;
+};
+
+// One attempt at the licence POST. `primeSession` fetches the site landing page
+// first so the POST carries the ci_session cookie the host's anti-bot rule
+// expects from a browser, and `forceHttp11` keeps the request on the protocol
+// script clients normally get accepted on.
+inline LicenceHttpResult PostLicenceAttempt(const std::string &url,
+                                            const std::string &referer,
+                                            const std::string &postFields,
+                                            const char *userAgent,
+                                            bool primeSession,
+                                            bool forceHttp11)
+{
+    LicenceHttpResult result;
+    result.status = 0;
+    result.code = CURLE_OK;
+
+    struct MemoryStruct chunk{};
+    chunk.memory = (char *) calloc(1, 1);
+    chunk.size = 0;
+
+    CURL *curl = curl_easy_init();
+    if (curl == nullptr) {
+        free(chunk.memory);
+        result.code = CURLE_FAILED_INIT;
+        return result;
+    }
+
+    std::string origin = referer;
+    while (!origin.empty() && origin.back() == '/') origin.pop_back();
+
+    struct curl_slist *headers = NULL;
+    headers = curl_slist_append(headers, "Content-Type: application/x-www-form-urlencoded");
+    headers = curl_slist_append(headers, "Accept: application/json, text/plain, */*");
+    headers = curl_slist_append(headers, "Accept-Language: en-US,en;q=0.9");
+    headers = curl_slist_append(headers, "X-Requested-With: XMLHttpRequest");
+    headers = curl_slist_append(headers, (std::string("Referer: ") + referer).c_str());
+    headers = curl_slist_append(headers, (std::string("Origin: ") + origin).c_str());
+
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+    curl_easy_setopt(curl, CURLOPT_DEFAULT_PROTOCOL, "https");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+    curl_easy_setopt(curl, CURLOPT_USERAGENT, userAgent);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *) &chunk);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
+    curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 15L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 8L);
+    if (forceHttp11)
+        curl_easy_setopt(curl, CURLOPT_HTTP_VERSION, (long) CURL_HTTP_VERSION_1_1);
+    if (primeSession)
+        curl_easy_setopt(curl, CURLOPT_COOKIEFILE, "");   // turn on libcurl's cookie engine
+
+    if (primeSession) {
+        curl_easy_setopt(curl, CURLOPT_URL, referer.c_str());
+        curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+        const CURLcode warmup = curl_easy_perform(curl);
+        chunk.size = 0;
+        if (chunk.memory != nullptr)
+            chunk.memory[0] = '\0';
+        if (warmup != CURLE_OK) {
+            curl_slist_free_all(headers);
+            curl_easy_cleanup(curl);
+            free(chunk.memory);
+            result.code = warmup;
+            return result;
+        }
+        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+        curl_easy_setopt(curl, CURLOPT_HTTPGET, 0L);
+    }
+
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, postFields.c_str());
+    result.code = curl_easy_perform(curl);
+    if (result.code == CURLE_OK)
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &result.status);
+    result.body.assign(chunk.memory != nullptr ? chunk.memory : "");
+
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    free(chunk.memory);
+    return result;
 }
 
 int ShowSoftKeyboardInput() {
@@ -309,7 +430,6 @@ std::string Login(const char *user_key) {
     std::string hwid;
     std::string UUID;
     std::string errMsg;
-    struct MemoryStruct chunk{};
     activityThreadClass = env->FindClass("android/app/ActivityThread");
     if (!activityThreadClass) {
         errMsg = "ActivityThread class not found";
@@ -343,77 +463,72 @@ std::string Login(const char *user_key) {
     hwid += GetDeviceBrand(env);
     UUID = GetDeviceUniqueIdentifier(env, hwid.c_str());
     
-    chunk.memory = (char *) calloc(1, 1);
-    chunk.size = 0;
-    
-    CURL *curl;
-    CURLcode res;
-    curl = curl_easy_init();
-    
-    if (curl) {
+    {
+        // Scoped so the goto cleanup above does not jump into these initializations.
         std::string api_url = oxorany("https://xlreyt.x10.mx/connect");
-        curl_easy_setopt(curl, CURLOPT_URL, api_url.c_str());
-        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-        curl_easy_setopt(curl, CURLOPT_DEFAULT_PROTOCOL, "https");
-        
-        struct curl_slist *headers = NULL;
-        headers = curl_slist_append(headers, "Content-Type: application/x-www-form-urlencoded");
-        headers = curl_slist_append(headers, "Accept: application/json");
-        
-        curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-        curl_easy_setopt(curl, CURLOPT_USERAGENT, "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36");
-        char data[4096];
-        sprintf(data, "game=CODMGR&user_key=%s&serial=%s", user_key, UUID.c_str());
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, data);
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void *) &chunk);
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 0L);
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 0L);
-        
-        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 12L);
-        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 6L);
-        res = curl_easy_perform(curl);
-        if (res == CURLE_OK) {
-            long httpCode = 0;
-            curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &httpCode);
-            if (httpCode != 200) {
-                errMsg = "Server error: HTTP " + std::to_string(httpCode);
-            } else {
-                try {
-                    json result = json::parse(chunk.memory);
-                    if (result["status"] == true) {
-                        std::string token = result["data"]["token"].get<std::string>();
-                        time_t rng = result["data"]["rng"].get<time_t>();
-                        EXP = result["data"]["EXP"].get<std::string>();
-                        expiryTimestamp = parseExpiryDate(EXP);
-                        if (rng + 30 > time(0)) {
-                            std::string auth = "CODMGR";
-                            auth += "-";
-                            auth += user_key;
-                            auth += "-";
-                            auth += UUID;
-                            auth += "-";
-                            auth += "Vm8Lk7Uj2JmsjCPVPVjrLa7zgfx3uz9E";
-                            
-                            std::string outputAuth = CalcMD5(auth);
-                            g_Token = token;
-                            g_Auth = outputAuth;
-                            bValid = g_Token == g_Auth;
-                        }
-                    } else {
-                        errMsg = result["reason"].get<std::string>();
-                    }
-                } catch (std::exception &e) {
-                    errMsg = e.what();
-                }
-            }
+        std::string site_root = "https://xlreyt.x10.mx/";
+        std::string postFields = "game=CODMGR&user_key=" + std::string(user_key) + "&serial=" + UUID;
+
+        // Attempt 1: the plain browser-style POST.
+        LicenceHttpResult attempt = PostLicenceAttempt(
+                api_url, site_root, postFields,
+                "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+                false, false);
+
+        // The host refuses requests it does not trust with a 403 block page (no
+        // user agent, script user agents, or a POST that arrives without a site
+        // session). When that happens, go through the website itself: pull the
+        // landing page for its ci_session cookie, then POST over HTTP/1.1 with a
+        // desktop user agent.
+        if (attempt.code != CURLE_OK || attempt.status != 200) {
+            LicenceHttpResult retry = PostLicenceAttempt(
+                    api_url, site_root, postFields,
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    true, true);
+            __android_log_print(ANDROID_LOG_INFO, "AstralLogin",
+                                "licence POST first=%ld/%d retry=%ld/%d",
+                                attempt.status, (int) attempt.code,
+                                retry.status, (int) retry.code);
+            attempt = retry;
+        }
+
+        if (attempt.code != CURLE_OK) {
+            errMsg = curl_easy_strerror(attempt.code);
+        } else if (attempt.status != 200) {
+            errMsg = "Server error: HTTP " + std::to_string(attempt.status);
+            const std::string hint = ExtractResponseHint(attempt.body);
+            if (!hint.empty())
+                errMsg += " - " + hint;
         } else {
-            errMsg = curl_easy_strerror(res);
+            try {
+                json result = json::parse(attempt.body);
+                if (result["status"] == true) {
+                    std::string token = result["data"]["token"].get<std::string>();
+                    time_t rng = result["data"]["rng"].get<time_t>();
+                    EXP = result["data"]["EXP"].get<std::string>();
+                    expiryTimestamp = parseExpiryDate(EXP);
+                    if (rng + 30 > time(0)) {
+                        std::string auth = "CODMGR";
+                        auth += "-";
+                        auth += user_key;
+                        auth += "-";
+                        auth += UUID;
+                        auth += "-";
+                        auth += "Vm8Lk7Uj2JmsjCPVPVjrLa7zgfx3uz9E";
+                        std::string outputAuth = CalcMD5(auth);
+                        g_Token = token;
+                        g_Auth = outputAuth;
+                        bValid = g_Token == g_Auth;
+                    }
+                } else {
+                    errMsg = result["reason"].get<std::string>();
+                }
+            } catch (std::exception &e) {
+                errMsg = e.what();
+            }
         }
     }
-    curl_easy_cleanup(curl);
-    free(chunk.memory);
-    chunk.memory = nullptr;
+    
     
 login_cleanup:
     if (env->ExceptionCheck()) {
