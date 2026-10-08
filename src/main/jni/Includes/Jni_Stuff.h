@@ -413,8 +413,15 @@ login_cleanup:
     if (attachedHere) {
         jvm->DetachCurrentThread();
     }
-    if (!errMsg.empty()) {
-        return errMsg;
+    if (bValid) {
+        return "OK";
     }
-    return bValid ? "OK" : errMsg;
+    // Never return an empty string: the UI treats "" as "still in flight", so an
+    // empty result left the login window spinning on "Authorizing..." forever.
+    // This happens when HTTP/parse succeeded but the token check failed (or curl
+    // never initialized) without setting errMsg.
+    if (errMsg.empty()) {
+        errMsg = "Login failed: could not verify your license key";
+    }
+    return errMsg;
 }

@@ -1030,6 +1030,7 @@ static void StartLoginAttempt(const char* key) {
         std::lock_guard<std::mutex> lock(g_loginMutex);
         g_loginResult.clear();
     }
+    err.clear(); // drop any stale error so it can't overlap this attempt's status
     SaveLoginTextForAttempt(key);
     g_loginInFlight = true;
     g_loginStart = ImGui::GetTime();
@@ -1739,17 +1740,17 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                 // Show a progress/loading state while the in-flight login is running.
                 if (g_loginInFlight) {
                     const float elapsed = ImGui::GetTime() - g_loginStart;
-                    ImGui::PushFont(F50);
-                    ImGui::SetCursorPos(ImVec2(30, 420.0f));
-                    ImGui::TextColored(ImVec4(0.56f, 0.56f, 0.62f, 1.0f), "Authorizing...");
-                    ImGui::PopFont();
-                    ImGui::SetCursorPos(ImVec2(30.0f, 444.0f));
-                    ImGui::TextColored(ImVec4(0.56f, 0.56f, 0.62f, 0.9f),
-                                       "Please wait while we verify your license key...");
                     std::string dots = ".";
                     for (int i = 0; i < (int)std::fmod(elapsed * 3.0f, 3.0f); ++i) dots += ".";
-                    ImGui::SetCursorPos(ImVec2(30, 462.0f));
-                    ImGui::TextColored(ImVec4(0.42f, 0.42f, 0.47f, 1.0f), "Request in progress%s", dots.c_str());
+                    ImGui::PushFont(F50);
+                    ImGui::SetCursorPos(ImVec2(30, 418.0f));
+                    ImGui::TextColored(ImVec4(0.56f, 0.56f, 0.62f, 1.0f), "Authorizing...");
+                    ImGui::PopFont();
+                    // Keep this line inside the 460px login window: the previous
+                    // layout drew it at y=462 where it was completely clipped away.
+                    ImGui::SetCursorPos(ImVec2(30.0f, 446.0f));
+                    ImGui::TextColored(ImVec4(0.42f, 0.42f, 0.47f, 1.0f),
+                                       "Verifying license key%s", dots.c_str());
 
                     // Keep keyboard dismissal working so the user isn't stuck behind an
                     // open keyboard while we wait for the server round-trip.
@@ -1781,8 +1782,15 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                 }
 
                 if (!err.empty() && err != "OK") {
-                    ImGui::SetCursorPos(ImVec2(30, 458.0f));
+                    // The window is only 460px tall: the old y=458 placement left
+                    // ~2px of the message visible, so failed logins looked like the
+                    // menu simply never opened. Draw it in the status area instead.
+                    ImGui::SetCursorPos(ImVec2(30, 416.0f));
+                    ImGui::PushTextWrapPos(610.0f);
                     ImGui::TextColored(ImColor(255, 90, 90, 255), "Error: %s", err.c_str());
+                    ImGui::TextColored(ImVec4(0.56f, 0.56f, 0.62f, 1.0f),
+                                       "Press LOG IN to try again.");
+                    ImGui::PopTextWrapPos();
                 }
 
                 if (showKeyboard) RenderVirtualKeyboard("##VirtualKeyboardLogin", s, sizeof(s), &showKeyboard);

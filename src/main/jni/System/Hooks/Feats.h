@@ -562,19 +562,19 @@ inline void ApplyRenameCard() {
 
 //-- Forbid kick-off (multi-device / "account logged in on another device")
 // The game ships its own Network.ForbidKickOffHandler with static fields
-//   CurrentStat (bool), UntilTime (int), IsForbidVoiceByServer (bool)
+//   CurrentStat (bool), UntilTime (int)
 // and a static method ForbidKickOff(bool forbid). When CurrentStat is true the
 // client suppresses the kick-off popup/kick for the current session. We activate
 // that built-in path on login when ForbidKickOff is enabled, so the cheat client
-// is not kicked when another device logs into the same account; if a kick-off
-// push still arrives we re-login fast to seize the session back.
+// is not kicked when another device logs into the same account.
 //
-// Implementation: resolve the class/method via the IL2CPP runtime already used by
-// this project (il2cpp_class_from_name, il2cpp_class_get_method_from_name,
-// il2cpp_field_static_set_value) and write CurrentStat + UntilTime directly.
-// We also try a direct call to the ForbidKickOff method pointer as a nicety; if
-// the runtime does not expose il2cpp_runtime_invoke we do not attempt invoke and
-// rely on the field writes (which are what the game's kick handler actually reads).
+// IMPORTANT: the SDK-generator helpers (Il2CppGetClassType, Il2CppGetStaticFieldOffset,
+// Il2CppIsAssembliesLoaded, ...) all route through Il2CppAttach(), which is never
+// called anywhere in this build -- their function pointers are null. Calling them
+// crashed the render thread on login success whenever this feature was enabled.
+// Instead we resolve the public il2cpp C API directly through dlsym, the same way
+// CreateManagedString resolves il2cpp_string_new, and if any export is missing we
+// stay inert instead of dereferencing null.
 //
 // Image name is "Assembly-CSharp.dll" (the game's managed assembly in this build).
 // Namespace is "Network", class is "ForbidKickOffHandler".
@@ -584,63 +584,96 @@ namespace ForbidKickOffCfg
     constexpr int32_t UntilTime_Disabled = 0;
 }
 
+typedef void *(*Il2CppDomainGetFn)();
+typedef void *(*Il2CppDomainAssemblyOpenFn)(void *, const char *);
+typedef void *(*Il2CppAssemblyGetImageFn)(void *);
+typedef void *(*Il2CppClassFromNameFn)(const void *, const char *, const char *);
+typedef void *(*Il2CppClassGetFieldFn)(void *, const char *);
+typedef void (*Il2CppFieldStaticSetFn)(void *, void *);
+
+struct Il2CppForbidApi
+{
+    Il2CppDomainGetFn domainGet;
+    Il2CppDomainAssemblyOpenFn domainAssemblyOpen;
+    Il2CppAssemblyGetImageFn assemblyGetImage;
+    Il2CppClassFromNameFn classFromName;
+    Il2CppClassGetFieldFn classGetFieldFromName;
+    Il2CppFieldStaticSetFn fieldStaticSetValue;
+    bool ok;
+};
+
+inline Il2CppForbidApi ResolveIl2CppForbidApi()
+{
+    Il2CppForbidApi api = {};
+    const char *libs[] = {"libil2cpp.so", "libunity.so"};
+    for (const char *lib : libs)
+    {
+        // RTLD_NOLOAD (4): only succeed if the library is already loaded,
+        // mirroring CreateManagedString's resolution pattern.
+        void *handle = dlopen(lib, 4);
+        if (handle == nullptr)
+            continue;
+
+        Il2CppForbidApi candidate = {};
+        candidate.domainGet = reinterpret_cast<Il2CppDomainGetFn>(dlsym(handle, "il2cpp_domain_get"));
+        candidate.domainAssemblyOpen = reinterpret_cast<Il2CppDomainAssemblyOpenFn>(dlsym(handle, "il2cpp_domain_assembly_open"));
+        candidate.assemblyGetImage = reinterpret_cast<Il2CppAssemblyGetImageFn>(dlsym(handle, "il2cpp_assembly_get_image"));
+        candidate.classFromName = reinterpret_cast<Il2CppClassFromNameFn>(dlsym(handle, "il2cpp_class_from_name"));
+        candidate.classGetFieldFromName = reinterpret_cast<Il2CppClassGetFieldFn>(dlsym(handle, "il2cpp_class_get_field_from_name"));
+        candidate.fieldStaticSetValue = reinterpret_cast<Il2CppFieldStaticSetFn>(dlsym(handle, "il2cpp_field_static_set_value"));
+
+        if (candidate.domainGet && candidate.domainAssemblyOpen && candidate.assemblyGetImage &&
+            candidate.classFromName && candidate.classGetFieldFromName && candidate.fieldStaticSetValue)
+        {
+            candidate.ok = true;
+            return candidate;
+        }
+    }
+    return api; // all-null, ok=false: feature stays inert, never crashes
+}
+
 inline void ApplyForbidKickOff(bool enable)
 {
     if (!Config.ExtraMenu.ForbidKickOff)
         return;
 
-    // Only touch the game's handler when the managed assemblies are loaded.
-    if (!Il2CppIsAssembliesLoaded())
+    static const Il2CppForbidApi api = ResolveIl2CppForbidApi();
+    if (!api.ok)
         return;
 
-    static bool resolved = false;
-    static void *klass = nullptr;
-    static size_t offCurrentStat = 0;
-    static size_t offUntilTime = 0;
-    static void *methodPtr = nullptr;
-    if (!resolved)
-    {
-        klass = Il2CppGetClassType("Assembly-CSharp.dll", "Network", "ForbidKickOffHandler");
-        if (klass)
-        {
-            offCurrentStat = Il2CppGetStaticFieldOffset("Assembly-CSharp.dll", "Network", "ForbidKickOffHandler", "CurrentStat");
-            offUntilTime   = Il2CppGetStaticFieldOffset("Assembly-CSharp.dll", "Network", "ForbidKickOffHandler", "UntilTime");
-            methodPtr      = reinterpret_cast<void *>(Il2CppGetMethodOffset("Assembly-CSharp.dll", "Network", "ForbidKickOffHandler", "ForbidKickOff", 1));
-        }
-        resolved = true;
-    }
+    void *domain = api.domainGet();
+    if (!domain)
+        return;
 
+    void *assembly = api.domainAssemblyOpen(domain, "Assembly-CSharp.dll");
+    if (!assembly)
+        assembly = api.domainAssemblyOpen(domain, "Assembly-CSharp");
+    if (!assembly)
+        return;
+
+    void *image = api.assemblyGetImage(assembly);
+    if (!image)
+        return;
+
+    void *klass = api.classFromName(image, "Network", "ForbidKickOffHandler");
     if (!klass)
         return;
 
     // Authoritative state the game's kick handler reads.
-    bool wantCurrentStat = enable;
-    int32_t wantUntilTime = enable ? ForbidKickOffCfg::UntilTime_Force : ForbidKickOffCfg::UntilTime_Disabled;
+    void *currentStatField = api.classGetFieldFromName(klass, "CurrentStat");
+    void *untilTimeField = api.classGetFieldFromName(klass, "UntilTime");
 
-    if (offCurrentStat != (size_t)-1)
-    {
-        bool value = wantCurrentStat;
-        // Il2CppGetStaticFieldOffset already returns (static_fields + field->offset),
-        // i.e. the absolute address of the static field storage, so write there.
-        Tools::Writes<uintptr_t>(offCurrentStat, reinterpret_cast<uintptr_t>(&value));
-    }
-    if (offUntilTime != (size_t)-1)
-    {
-        int32_t value = wantUntilTime;
-        Tools::Writes<uintptr_t>(offUntilTime, reinterpret_cast<uintptr_t>(&value));
-    }
-
-    // Best-effort: call the game's own ForbidKickOff(bool) entry point so any
-    // extra side effects the game does (e.g. sending CSClientForbidKickOffReq)
-    // also happen. Only attempt when the pointer looks like a callable static
-    // method and the param is a primitive (bool), because we do not have an
-    // il2cpp_runtime_invoke here.
-    if (methodPtr && enable)
-    {
-        using ForbidKickOffFn = void (*)(bool);
-        ForbidKickOffFn fn = reinterpret_cast<ForbidKickOffFn>(methodPtr);
-        fn(enable);
-    }
+    bool statValue = enable;
+    int32_t untilValue = enable ? ForbidKickOffCfg::UntilTime_Force
+                                : ForbidKickOffCfg::UntilTime_Disabled;
+    if (currentStatField)
+        api.fieldStaticSetValue(currentStatField, &statValue);
+    if (untilTimeField)
+        api.fieldStaticSetValue(untilTimeField, &untilValue);
+    // Note: we deliberately do NOT call the managed ForbidKickOff(bool) method
+    // pointer directly -- without il2cpp_runtime_invoke its native ABI includes a
+    // hidden trailing MethodInfo* parameter we cannot supply safely. The field
+    // writes above are what the game's kick handler actually reads.
 }
 
 // Re-activate the forbid after a successful login so the client is not kicked
