@@ -236,6 +236,7 @@ inline void RenderEspTab(float childWidth, float childHeight) {
         custom::Checkbox("ESP Line", &Config.ESPMenu.isPlayerLine);
         custom::Checkbox("ESP Box", &Config.ESPMenu.Box);
         custom::Checkbox("ESP Skeleton", &Config.ESPMenu.Skeleton);
+        custom::Checkbox("ESP Hitbox", &Config.ESPMenu.Hitbox);
         custom::Checkbox("ESP Health", &Config.ESPMenu.Health);
         custom::Checkbox("ESP Name", &Config.ESPMenu.Name);
         custom::Checkbox("ESP Distance", &Config.ESPMenu.Distance);
@@ -527,19 +528,68 @@ inline void DrawRuntimeEspPreviewPanel(const ImVec2 &min, const ImVec2 &size) {
     const ImVec2 previewMax(max.x - 12.0f, max.y - 14.0f);
     drawList->AddRectFilled(previewMin, previewMax, IM_COL32(22, 22, 22, 245), 7.0f);
 
-    // Lightweight visual-only preview. It does not read or modify gameplay state.
-    const float groundY = previewMax.y - 34.0f;
+        const float groundY = previewMax.y - 34.0f;
     drawList->AddRectFilled(ImVec2(previewMin.x, groundY), previewMax, IM_COL32(17, 17, 17, 255), 0.0f);
     drawList->AddLine(ImVec2(previewMin.x, groundY), ImVec2(previewMax.x, groundY), IM_COL32(45, 45, 45, 220), 1.0f);
 
-    const ImVec2 boxCenter((previewMin.x + previewMax.x) * 0.5f, (previewMin.y + groundY) * 0.5f + 8.0f);
-    const float boxW = ImMin(58.0f, (previewMax.x - previewMin.x) * 0.42f);
-    const float boxH = ImMin(120.0f, (groundY - previewMin.y) * 0.55f);
-    const ImVec2 boxMin(boxCenter.x - boxW * 0.5f, boxCenter.y - boxH * 0.5f);
-    const ImVec2 boxMax(boxCenter.x + boxW * 0.5f, boxCenter.y + boxH * 0.5f);
+        const ImVec2 charCenter((previewMin.x + previewMax.x) * 0.5f, (previewMin.y + groundY) * 0.5f + 4.0f);
+    const float charHeight = ImMin(100.0f, (groundY - previewMin.y) * 0.50f);
+    const float charWidth = charHeight * 0.35f;
+    
+        const float hitboxScale = Config.ExtraMenu.HitboxScale;
+    const float bodyRadius = (0.5f + 0.375f * hitboxScale) * charHeight * 0.15f;
+    const float bodyTop = charCenter.y - charHeight * 0.45f;
+    const float bodyBot = charCenter.y + charHeight * 0.25f;
+    
+    // Draw body as 3D sphere (circle in preview)
+    drawList->AddCircleFilled(charCenter, bodyRadius, IM_COL32(180, 180, 180, 200));
+    drawList->AddCircle(charCenter, bodyRadius, IM_COL32(142, 134, 246, 255), 0, 2.0f);
+    
+        const float headSphereRadius = (0.25f + 0.125f * hitboxScale) * charHeight * 0.15f;
+    const ImVec2 headCenter(charCenter.x, bodyTop - headSphereRadius * 2.0f);
+    drawList->AddCircleFilled(headCenter, headSphereRadius, IM_COL32(200, 200, 200, 200));
+    drawList->AddCircle(headCenter, headSphereRadius, IM_COL32(255, 48, 48, 255), 0, 2.0f);
+    
+        if (Config.ExtraMenu.Hit) {
+        const float totalHitboxRadius = bodyRadius + headSphereRadius * 2.0f;
+        drawList->AddCircle(charCenter, bodyRadius + headSphereRadius * 1.5f, IM_COL32(255, 255, 255, 180), 0, 1.0f);
+    }
 
-    drawList->AddRect(boxMin, boxMax, IM_COL32(255, 48, 48, 255), 2.0f, 0, 2.0f);
-    drawList->AddRectFilled(ImVec2(boxMin.x, boxMin.y - 9.0f), ImVec2(boxMax.x, boxMin.y - 5.0f), IM_COL32(42, 255, 75, 255), 2.0f);
+        const ImVec2 boxMin(charCenter.x - charWidth * 0.5f, bodyTop);
+    const ImVec2 boxMax(charCenter.x + charWidth * 0.5f, bodyBot);
+    
+    ImU32 boxColor = IM_COL32(255, 48, 48, 255);
+    switch (Config.ESPMenu.BoxType) {
+        case EspBoxType::Fill:
+            drawList->AddRectFilled(boxMin, boxMax, IM_COL32(255, 48, 48, 40), 0.0f);
+            drawList->AddRect(boxMin, boxMax, boxColor, 0.0f, 0, 2.0f);
+            break;
+        case EspBoxType::Outline:
+            drawList->AddRect(boxMin, boxMax, boxColor, 0.0f, 0, 2.0f);
+            break;
+        case EspBoxType::Corner: {
+            float iw = charWidth / 4.0f;
+            float ih = charHeight / 4.0f;
+            drawList->AddLine(ImVec2(boxMin.x, boxMin.y), ImVec2(boxMin.x + iw, boxMin.y), boxColor, 2.0f);
+            drawList->AddLine(ImVec2(boxMax.x - iw, boxMin.y), ImVec2(boxMax.x, boxMin.y), boxColor, 2.0f);
+            drawList->AddLine(ImVec2(boxMin.x, boxMin.y), ImVec2(boxMin.x, boxMin.y + ih), boxColor, 2.0f);
+            drawList->AddLine(ImVec2(boxMax.x - 1.0f, boxMin.y), ImVec2(boxMax.x - 1.0f, boxMin.y + ih), boxColor, 2.0f);
+            drawList->AddLine(ImVec2(boxMin.x, boxMax.y), ImVec2(boxMin.x + iw, boxMax.y), boxColor, 2.0f);
+            drawList->AddLine(ImVec2(boxMax.x - iw, boxMax.y), ImVec2(boxMax.x, boxMax.y), boxColor, 2.0f);
+            drawList->AddLine(ImVec2(boxMin.x, boxMax.y - ih), ImVec2(boxMin.x, boxMax.y), boxColor, 2.0f);
+            drawList->AddLine(ImVec2(boxMax.x - 1.0f, boxMax.y - ih), ImVec2(boxMax.x - 1.0f, boxMax.y), boxColor, 2.0f);
+            break;
+        }
+        case EspBoxType::ThreeD:
+            // Simple 3D box representation
+            drawList->AddLine(boxMin, ImVec2(boxMin.x, boxMin.y - 15.0f), boxColor, 2.0f);
+            drawList->AddLine(ImVec2(boxMin.x + charWidth, boxMin.y), ImVec2(boxMin.x + charWidth, boxMin.y - 15.0f), boxColor, 2.0f);
+            drawList->AddLine(ImVec2(boxMin.x, boxMin.y - 15.0f), ImVec2(boxMin.x + charWidth, boxMin.y - 15.0f), boxColor, 2.0f);
+            drawList->AddLine(boxMin, boxMax, boxColor, 2.0f);
+            drawList->AddLine(ImVec2(boxMin.x + charWidth, boxMin.y), ImVec2(boxMin.x + charWidth, boxMax.y), boxColor, 2.0f);
+            drawList->AddLine(boxMax, ImVec2(boxMin.x + charWidth, boxMin.y - 15.0f), boxColor, 2.0f);
+            break;
+    }
 
     const char *enemy = "Enemy";
     const ImVec2 enemySz = textFont->CalcTextSizeA(12.0f, FLT_MAX, 0.0f, enemy);
@@ -550,6 +600,13 @@ inline void DrawRuntimeEspPreviewPanel(const ImVec2 &min, const ImVec2 &size) {
     const ImVec2 distanceSz = textFont->CalcTextSizeA(11.0f, FLT_MAX, 0.0f, distance);
     drawList->AddText(textFont, 11.0f,
         ImVec2(boxCenter.x - distanceSz.x * 0.5f, boxMax.y + 7.0f), IM_COL32(255, 74, 74, 255), distance);
+
+        if (Config.ExtraMenu.Hit) {
+        char hitboxInfo[64];
+        std::snprintf(hitboxInfo, sizeof(hitboxInfo), "Hitbox: %.1f", hitboxScale);
+        drawList->AddText(textFont, 10.0f,
+            ImVec2(boxCenter.x - 30.0f, boxMax.y + 22.0f), IM_COL32(142, 134, 246, 255), hitboxInfo);
+    }
 }
 
 inline void CollapseMenu(StateRefs &state) {

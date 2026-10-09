@@ -2281,8 +2281,11 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                                 {
                                     const ChildFrame left = BeginContentChild("MEMORY HACKS", ImVec2(childWidth, childHeight));
                                     custom::Checkbox("Hitbox", &Config.ExtraMenu.Hit);
-                                    custom::SliderFloat("Hitbox Size", &Config.ExtraMenu.HitboxScale, 0.5f, 25.0f, "%.1fm");
-                                    custom::SliderFloat("Head Band", &Config.ExtraMenu.TuneHitboxHeadBand, 0.0f, 1.5f, "%.2f");
+                                    if (Config.ExtraMenu.Hit) {
+                                        custom::SliderFloat("Hitbox Size", &Config.ExtraMenu.HitboxScale, 0.5f, 25.0f, "%.1fm");
+                                        ImGui::TextColored(c::text::text, "Enlarges enemy body + head hitbox");
+                                        ImGui::TextUnformatted("Headshots automatic when near head");
+                                    }
                                     custom::Checkbox("No Recoil", &Config.ExtraMenu.Recoil);
                                     custom::Checkbox("No Spread", &Config.ExtraMenu.Spread);
                                     custom::Checkbox("No Shake", &Config.ExtraMenu.Shake);

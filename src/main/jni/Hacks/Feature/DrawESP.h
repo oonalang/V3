@@ -689,6 +689,38 @@ static inline void DrawVehicleESP(ImDrawList *draw, int sWidth, int sHeight) {
     }
 }
 
+static inline void DrawHitbox(ImDrawList* draw, Vector3 rootPos, Vector3 headPos, int sHeight, ImU32 color, float thickness) {
+    if (!Config.ExtraMenu.Hit || !Config.ESPMenu.Hitbox) return;
+    Camera* mainCamera = Camera::get_main();
+    if (!mainCamera) return;
+    
+    const float hitboxScale = Config.ExtraMenu.HitboxScale;
+    const float bodyRadius = (0.5f + 0.375f * hitboxScale) * 50.0f;
+    const float headSphereRadius = (0.25f + 0.125f * hitboxScale) * 50.0f;
+    
+    auto Project = [&](Vector3 world) -> ImVec2 {
+        Vector3 screen = mainCamera->WorldToScreenPoint(world);
+        if (screen.z <= 0.01f) return ImVec2(-9999.0f, -9999.0f);
+        return ImVec2(screen.x, sHeight - screen.y);
+    };
+    
+    ImVec2 bodyScreen = Project(rootPos + Vector3(0, bodyRadius / 50.0f, 0));
+    if (bodyScreen.x > -9999.0f) {
+        draw->AddCircleFilled(bodyScreen, bodyRadius, IM_COL32(180, 180, 180, 180));
+        draw->AddCircle(bodyScreen, bodyRadius, color, 0, thickness);
+    }
+    
+    ImVec2 headScreen = Project(headPos);
+    if (headScreen.x > -9999.0f) {
+        draw->AddCircleFilled(headScreen, headSphereRadius, IM_COL32(200, 200, 200, 180));
+        draw->AddCircle(headScreen, headSphereRadius, IM_COL32(255, 48, 48, 255), 0, thickness);
+    }
+    
+    if (bodyScreen.x > -9999.0f && headScreen.x > -9999.0f) {
+        draw->AddLine(bodyScreen, headScreen, IM_COL32(142, 134, 246, 180), thickness * 0.5f);
+    }
+}
+
 void DrawESP(ImDrawList *draw, int sWidth, int sHeight, float density) {
     ApplySpeedhack();
     ApplyNoGravityRuntime();
@@ -971,6 +1003,9 @@ void DrawESP(ImDrawList *draw, int sWidth, int sHeight, float density) {
                     }
                 }
 
+                // Draw hitbox overlay
+                DrawHitbox(draw, pEnemyPawn_rootPos, pEnemyPawn_headPos, sHeight, boxColor, boxThickness);
+
                 if (Config.ESPMenu.EspStyle == EspStyleTarget::EspStyle3DSphere) {
                     DrawEspCylinder(draw, pEnemyPawn_rootPos, sHeight, boxColor);
                 } else if (Config.ESPMenu.EspStyle == EspStyleTarget::EspStylePlayerSignal) {
@@ -980,7 +1015,6 @@ void DrawESP(ImDrawList *draw, int sWidth, int sHeight, float density) {
         }
     }
 
-// ================= BAGONG HUDRON DESIGN (EKSAMININ MULA SA PILL THEME) =================
     if (Config.ESPMenu.Count) {
         int totalEnemyCount = totalBots + totalEnemies;
         

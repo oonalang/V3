@@ -216,18 +216,12 @@ inline float hook_GetMaxJumpHeight(void* instance) {
 //-- Increase Damage
 inline bool (*orig_SingleLineCheckPhysics)(void* instance, int hitType, void* hitTarget, void* hitCollider, Vector3 startPos, Vector3 dir, void* impactInfo) = nullptr;
 
-// Aim-aware hitbox state: the physics hook remembers which enemy (and its head
-// height / head position) accepted the expanded shot, so the damage hook can
-// decide Head vs Body from where the shot actually landed.
-inline void*  g_hitboxAcceptedPawn   = nullptr;   // enemy Pawn accepted by the physics check
-inline float  g_hitboxHeadHeightY    = 0.0f;      // that pawn's head world Y
-inline Vector3 g_hitboxHeadPos       = Vector3::zero();
+
+inline void*  g_hitboxHitPawn     = nullptr;  
+inline bool   g_hitboxHitHead       = false;    
 inline uintptr_t g_hitboxDamageInfo  = 0;
 
-// A-Fire (triggerbot / auto-fire). Weapon::Tick runs every frame on the game
-// thread for the weapon the local player is holding, so that is where the
-// trigger is pressed and released: while a target sits under the crosshair the
-// weapon is told to start firing, and told to stop once the target is gone.
+//-- A-Fire (triggerbot / auto-fire)
 inline bool     g_afireHoldingFire   = false;
 inline void    *g_afireFiringOn      = nullptr;
 inline float    g_afireLastPressTime = -1000.0f;
@@ -272,8 +266,7 @@ inline void hook_Weapon_Tick(void *instance, float deltaTime) {
         return;
     }
 
-    // Only drive the weapon the local player is currently holding.
-    Weapon *held = local->get_CurrentWeapon();
+   Weapon *held = local->get_CurrentWeapon();
     if (!Tools::IsPtrValid(held) || (void *) held != instance) {
         A_FireReleaseTrigger(instance);
         return;
@@ -281,16 +274,12 @@ inline void hook_Weapon_Tick(void *instance, float deltaTime) {
 
     bool ready = A_FireFindTarget() != 0;
 
-    // Criteria: 0 = whenever a target is under the crosshair,
-    //           1 = only while aiming / scoped,
-    //           2 = only while the fire button is already held.
-    if (ready && Config.ExtraMenu.A_FireTrigger == 1)
+   if (ready && Config.ExtraMenu.A_FireTrigger == 1)
         ready = Class_Pawn_IsAiming != 0 && ((bool (*)(uintptr_t)) Class_Pawn_IsAiming)((uintptr_t) local);
     else if (ready && Config.ExtraMenu.A_FireTrigger == 2)
         ready = Class_Pawn_get_IsFiring != 0 && ((bool (*)(uintptr_t)) Class_Pawn_get_IsFiring)((uintptr_t) local);
 
-    // Optional delay between trigger presses.
-    if (ready && Config.ExtraMenu.A_FireDelay > 0.0f) {
+   if (ready && Config.ExtraMenu.A_FireDelay > 0.0f) {
         const float now = ImGui::GetTime();
         if (now - g_afireLastPressTime < Config.ExtraMenu.A_FireDelay)
             ready = false;
@@ -312,88 +301,67 @@ inline void hook_Weapon_Tick(void *instance, float deltaTime) {
     }
 }
 
-         // DamageInfo produced right after the accepted shot
-
-struct HitboxAcceptResult {
-    bool     hit;
-   Pawn*    pawn;
-    float    headY;
-    Vector3  headPos;
-};
-
-static HitboxAcceptResult HitboxRayTest(const Vector3& startPos, const Vector3& dir) {
-    HitboxAcceptResult result{false, nullptr, 0.0f, Vector3::zero()};
-    MatchGame* matchGame = GamePlay::get_MatchGame();
-    if (!Tools::IsPtrValid(matchGame)) return result;
-    List<Pawn*>* enemyPawns = matchGame->EnemyPawns();
-    if (!Tools::IsPtrValid(enemyPawns)) return result;
-    Pawn** enemyItems = enemyPawns->getItems();
-    const int enemyCount = enemyPawns->getSize();
-    if (!Tools::IsPtrValid(enemyItems) || enemyCount <= 0) return result;
-
-    // Slider breaks the fixed size: scale grows the capsule in every direction.
-    // scale 1 (old default) -> radius 0.875m, top 1.75m, bottom 0.10m
-    const float s = ImClamp(Config.ExtraMenu.HitboxScale, 0.5f, 25.0f);
-    const float radius      = 0.50f + 0.375f * s;         // grows with the slider
-    const float radiusSq    = radius * radius;
-    const float topY        = 0.95f + 0.80f * s;         // capsule top (head zone)
-    const float bottomY     = 0.10f - 0.02f * s;         // capsule bottom (feet/ground)
-    const float topBonusY   = 0.30f + 0.10f * s;         // zone above the head that still counts
-    const Vector3 rayAxis = Vector3::Normalized(dir);
-
-    float bestAlong = FLT_MAX;
-    for (int i = 0; i < enemyCount; i++) {
-        Pawn* enemy = enemyItems[i];
-        if (!Tools::IsPtrValid(enemy) || !enemy->m_IsAlive()) continue;
-
-        const Vector3 root   = enemy->get_LastPawnPos();     // pelvis/root of the model
-        const Vector3 head   = enemy->get_HeadPosition();
-        const float   headY  = head.y;
-
-        // Vertical capsule around the enemy model: base at bottomY above the
-        // root position, up to topY. Center at each Y level.
-        const float baseY = root.y + bottomY;   // capsule bottom in world space
-
-        // Closest point on the ray to the capsule axis (vertical at root.x/root.z)
-        const Vector3 toEnemy = root - startPos;
-        const float alongRay = Vector3::Dot(toEnemy, rayAxis);
-        if (alongRay <= 0.0f) continue;                      // behind us
-        const Vector3 closest = startPos + rayAxis * alongRay;
-
-        // Horizontal distance from the ray (at its closest approach) to the axis
-        const float dx = closest.x - root.x;
-        const float dz = closest.z - root.z;
-        const float horizDistSq = dx * dx + dz * dz;
-
-        // The ray height while passing the model decides where it "lands".
-        // Applying the same Y to both sides keeps the range checks scale-free.
-        const float closestWorldY = closest.y;
-        const float rel = closestWorldY - baseY;             // capsule-relative height
-        const float segTop = (root.y + topY + topBonusY) - baseY;
-
-        if (horizDistSq <= radiusSq && rel >= 0.0f && rel <= segTop) {
-            if (alongRay < bestAlong) {
-                bestAlong = alongRay;
-                result.hit = true;
-                result.pawn = enemy;
-                result.headY = headY;
-                result.headPos = head;
+inline bool SingleLineCheckPhysics(void* instance, int hitType, void* hitTarget, void* hitCollider, Vector3 startPos, Vector3 dir, void* impactInfo) {
+    if (instance != NULL && Config.ExtraMenu.Hit) {
+        Pawn* targetPawn = (Pawn*)hitTarget;
+        if (Tools::IsPtrValid(targetPawn)) {
+            const float hitboxScale = Config.ExtraMenu.HitboxScale;
+            const float bodyRadius = 0.5f + 0.375f * hitboxScale;
+            const float bodyRadiusSq = bodyRadius * bodyRadius;
+            const Vector3 root = targetPawn->get_LastPawnPos();
+            const Vector3 dirNorm = Vector3::Normalized(dir);
+            const Vector3 toRoot = root - startPos;
+            const float alongRoot = Vector3::Dot(toRoot, dirNorm);
+            
+            if (alongRoot > 0.0f) {
+               
+                const Vector3 closest = startPos + dirNorm * alongRoot;
+                const float dx = closest.x - root.x;
+                const float dz = closest.z - root.z;
+                const float horizDistSq = dx * dx + dz * dz;
+                
+                if (horizDistSq <= bodyRadiusSq) {
+                   
+                    const float headY = root.y + 1.75f * hitboxScale;
+                    const float hitY = closest.y;
+                    const float headBand = 0.35f * hitboxScale;
+                    
+                    if (hitY >= headY - headBand) {
+                       
+                        g_hitboxHitHead = true;
+                        g_hitboxHitPawn = targetPawn;
+                    } else {
+                        g_hitboxHitHead = false;
+                        g_hitboxHitPawn = targetPawn;
+                    }
+                    return true;
+                }
+                
+               
+                const float headSphereRadius = 0.25f + 0.125f * hitboxScale;
+                const float headSphereRadiusSq = headSphereRadius * headSphereRadius;
+                const Vector3 headPos = root + Vector3(0, 1.75f * hitboxScale, 0);
+                const Vector3 toHead = headPos - startPos;
+                const float alongHead = Vector3::Dot(toHead, dirNorm);
+                
+                if (alongHead > 0.0f) {
+                    const Vector3 closestHead = startPos + dirNorm * alongHead;
+                    const float distSq = (closestHead.x - headPos.x) * (closestHead.x - headPos.x) +
+                                        (closestHead.y - headPos.y) * (closestHead.y - headPos.y) +
+                                        (closestHead.z - headPos.z) * (closestHead.z - headPos.z);
+                    
+                    if (distSq <= headSphereRadiusSq) {
+                        g_hitboxHitHead = true;
+                        g_hitboxHitPawn = targetPawn;
+                        return true;
+                    }
+                }
             }
         }
     }
-    return result;
-}
-
-inline bool SingleLineCheckPhysics(void* instance, int hitType, void* hitTarget, void* hitCollider, Vector3 startPos, Vector3 dir, void* impactInfo) {
-    if (instance != NULL && Config.ExtraMenu.Hit) {
-        const HitboxAcceptResult acc = HitboxRayTest(startPos, dir);
-        if (acc.hit) {
-            g_hitboxAcceptedPawn = (void*)acc.pawn;
-            g_hitboxHeadHeightY = acc.headY;
-            g_hitboxHeadPos = acc.headPos;
-            return true;
-        }
-    }
+    
+    g_hitboxHitHead = false;
+    g_hitboxHitPawn = nullptr;
     return orig_SingleLineCheckPhysics(instance, hitType, hitTarget, hitCollider, startPos, dir, impactInfo);
 }
 
@@ -402,14 +370,10 @@ inline void* CalcDamageInfoInstantHit(void* instance, void** inImpactInfo, unsig
     void* damageInfo = orig_CalcDamageInfoInstantHit(instance, inImpactInfo, inFireMode, sourcePos, clientTime, ammoCount, punchX, punchY, spreadX, spreadY, fightOffSpeed, fightOffUp);
     g_hitboxDamageInfo = (uintptr_t)damageInfo;
     if (Config.ExtraMenu.Hit && damageInfo != NULL) {
-        // dump.cs DamageInfo: HitPos 0x30 (Vector3), HitNormal 0x3C, SourcePos 0x48,
-        // HitGroup 0x54 (offset already used by the project, confirms the block).
-        const uintptr_t di = (uintptr_t)damageInfo;
+       const uintptr_t di = (uintptr_t)damageInfo;
         const Vector3 hitPos = *(const Vector3*)(di + 0x30);
 
-        // Selected hit group (COMBAT > Hit Group). Auto decides from where the shot
-        // landed; anything else is written through verbatim.
-        int hitGroup = EHitGroup_Body;
+       int hitGroup = EHitGroup_Body;
 
         switch (Config.Aim.HitGroup) {
             case HitGroupHead:      hitGroup = EHitGroup_Head;      break;
@@ -419,28 +383,16 @@ inline void* CalcDamageInfoInstantHit(void* instance, void** inImpactInfo, unsig
             case HitGroupWeakPoint: hitGroup = EHitGroup_WeakPoint; break;
             case HitGroupNeck:      hitGroup = EHitGroup_Neck;      break;
             default: {
-                // Head band: how far below the head a hit still counts as a headshot.
-                const float headBand = ImClamp(Config.ExtraMenu.TuneHitboxHeadBand, 0.0f, 1.5f);
-
-                // Preferred: the enemy pawn whose expanded hitbox accepted this shot.
-                Pawn* accPawn = (Pawn*)g_hitboxAcceptedPawn;
-                if (Tools::IsPtrValid(accPawn)) {
-                    const Vector3 head = accPawn->get_HeadPosition();
-                    if (hitPos.y >= head.y - headBand) {
-                        // At head level or above (also "next to / above the head") -> headshot.
-                        hitGroup = EHitGroup_Head;
-                    }
-                } else if (g_hitboxHeadHeightY > 0.0f) {
-                    // Fallback: remembered head height from the physics check.
-                    if (hitPos.y >= g_hitboxHeadHeightY - headBand) {
-                        hitGroup = EHitGroup_Head;
-                    }
+               if (g_hitboxHitHead) {
+                    hitGroup = EHitGroup_Head;
                 } else {
-                    // Last resort: shooter-relative estimate (head is ~1.5m above the eye line
-                    // source in CODM's model space; anything clearly upper counts as head).
-                    const Vector3 src = *(const Vector3*)(di + 0x48);
-                    if (hitPos.y - src.y >= 0.65f) {
-                        hitGroup = EHitGroup_Head;
+                    const float headBand = ImClamp(Config.ExtraMenu.TuneHitboxHeadBand, 0.0f, 1.5f);
+                    Pawn* accPawn = (Pawn*)g_hitboxHitPawn;
+                    if (Tools::IsPtrValid(accPawn)) {
+                        const Vector3 head = accPawn->get_HeadPosition();
+                        if (hitPos.y >= head.y - headBand) {
+                            hitGroup = EHitGroup_Head;
+                        }
                     }
                 }
                 break;
@@ -449,9 +401,8 @@ inline void* CalcDamageInfoInstantHit(void* instance, void** inImpactInfo, unsig
 
         *(int*)(di + Class_DamageInfo_m_HitGroup) = hitGroup;
 
-        // One shot -> one decision: clear so a normal miss/bullet does not inherit it.
-        g_hitboxAcceptedPawn = nullptr;
-        g_hitboxHeadHeightY = 0.0f;
+       g_hitboxHitHead = false;
+        g_hitboxHitPawn = nullptr;
     }
     return damageInfo;
 }
@@ -500,9 +451,7 @@ inline void ApplyReportSpoofIdentity() {
     const uintptr_t base = (uintptr_t) info;
 
     if (Config.ExtraMenu.ReportSpoofTargetId != 0) {
-        // Keep both the public GamePlayerID property and the protected game player
-        // id on the decoy so every reader (report packet, scoreboard) agrees.
-        *(unsigned long long *) (base + Class_PlayerInfo_m_GamePlayerIDBacking) = Config.ExtraMenu.ReportSpoofTargetId;
+       *(unsigned long long *) (base + Class_PlayerInfo_m_GamePlayerIDBacking) = Config.ExtraMenu.ReportSpoofTargetId;
         *(unsigned long long *) (base + Class_PlayerInfo_m_GamePlayerId) = Config.ExtraMenu.ReportSpoofTargetId;
     }
 
@@ -525,8 +474,7 @@ inline void ApplyReportSpoofIdentity() {
 inline void (*orig_CSAccountReportUserReq_Write)(void *instance, void *writer) = nullptr;
 inline void hook_CSAccountReportUserReq_Write(void *instance, void *writer) {
     if (Config.ExtraMenu.ReportSpoof && instance != nullptr && Config.ExtraMenu.ReportSpoofTargetId != 0) {
-        // CSAccountReportUserReq.reported_player_id (dump.cs, offset 0x60)
-        *(unsigned long long *) ((uintptr_t) instance + 0x60) = Config.ExtraMenu.ReportSpoofTargetId;
+       *(unsigned long long *) ((uintptr_t) instance + 0x60) = Config.ExtraMenu.ReportSpoofTargetId;
     }
     if (orig_CSAccountReportUserReq_Write != nullptr)
         orig_CSAccountReportUserReq_Write(instance, writer);
@@ -563,23 +511,6 @@ inline void ApplyRenameCard() {
 //-- Long Slide
 
 //-- Forbid kick-off (multi-device / "account logged in on another device")
-// The game ships its own Network.ForbidKickOffHandler with static fields
-//   CurrentStat (bool), UntilTime (int)
-// and a static method ForbidKickOff(bool forbid). When CurrentStat is true the
-// client suppresses the kick-off popup/kick for the current session. We activate
-// that built-in path on login when ForbidKickOff is enabled, so the cheat client
-// is not kicked when another device logs into the same account.
-//
-// IMPORTANT: the SDK-generator helpers (Il2CppGetClassType, Il2CppGetStaticFieldOffset,
-// Il2CppIsAssembliesLoaded, ...) all route through Il2CppAttach(), which is never
-// called anywhere in this build -- their function pointers are null. Calling them
-// crashed the render thread on login success whenever this feature was enabled.
-// Instead we resolve the public il2cpp C API directly through dlsym, the same way
-// CreateManagedString resolves il2cpp_string_new, and if any export is missing we
-// stay inert instead of dereferencing null.
-//
-// Image name is "Assembly-CSharp.dll" (the game's managed assembly in this build).
-// Namespace is "Network", class is "ForbidKickOffHandler".
 namespace ForbidKickOffCfg
 {
     constexpr int32_t UntilTime_Force = 2147483647; // INT32_MAX: forbid stays active until explicitly cleared
@@ -610,9 +541,7 @@ inline Il2CppForbidApi ResolveIl2CppForbidApi()
     const char *libs[] = {"libil2cpp.so", "libunity.so"};
     for (const char *lib : libs)
     {
-        // RTLD_NOLOAD (4): only succeed if the library is already loaded,
-        // mirroring CreateManagedString's resolution pattern.
-        void *handle = dlopen(lib, 4);
+       void *handle = dlopen(lib, 4);
         if (handle == nullptr)
             continue;
 
@@ -661,8 +590,7 @@ inline void ApplyForbidKickOff(bool enable)
     if (!klass)
         return;
 
-    // Authoritative state the game's kick handler reads.
-    void *currentStatField = api.classGetFieldFromName(klass, "CurrentStat");
+   void *currentStatField = api.classGetFieldFromName(klass, "CurrentStat");
     void *untilTimeField = api.classGetFieldFromName(klass, "UntilTime");
 
     bool statValue = enable;
@@ -686,8 +614,7 @@ inline void ApplyForbidKickOffOnLogin()
 {
     if (!Config.ExtraMenu.ForbidKickOff)
         return;
-    // One-shot: only do this when the user asked for it on this login attempt.
-    if (Config.ExtraMenu.ForbidKickOffOnLogin)
+   if (Config.ExtraMenu.ForbidKickOffOnLogin)
     {
         ApplyForbidKickOff(true);
         Config.ExtraMenu.ForbidKickOffOnLogin = false;
@@ -1037,7 +964,7 @@ inline bool h_NeedDelayProcess(void *instance, int a, int b) {
     bool orig_val = o_NeedDelayProcess(instance, a, b);
 
     if (Config.ExtraMenu.Spectatex) {
-        return 0; // Return 0 instead of false for int return type
+        return 0;
     }
 
     return orig_val;
@@ -1243,7 +1170,7 @@ inline bool CheckInWaterComponent_get_CurrentWaterSurfaceHeight(void *instance) 
     return oCheckInWaterComponent_get_CurrentWaterSurfaceHeight(instance);
 }
 
-///Camera Pov
+//-- Camera POV
 float (*oInputSettingConfig_Instant_GetMainCameraFov_3p)(void *instance);
 float InputSettingConfig_Instant_GetMainCameraFov_3p(void *instance) {
     if (instance && Config.ExtraMenu.CameraPov) {
@@ -1391,12 +1318,12 @@ inline void InitializeAllHooks() {
     HOOK_LIB("libunity.so", "0xBF93BA4", IsNoCostAmmo, orig_IsNoCostAmmo);
 
 	//-- Unli Ammo (Functions)
-	HOOK_LIB("libunity.so", "0x50EB73C", hk_AmmoCanFire, orig_AmmoCanFire);          // AmmoCanFire - RVA: 0x50EB73C
-    HOOK_LIB("libunity.so", "0x5107904", hk_HasAmmo, orig_HasAmmo);                  // HasAmmo - RVA: 0x5107904
-    HOOK_LIB("libunity.so", "0xC14E570", hk_HasAmmo_IgnoreInfinite, orig_HasAmmo_IgnoreInfinite); // HasAmmo_IgnoreInfinite - RVA: 0xC14E570
-    HOOK_LIB("libunity.so", "0xC14D614", hk_ServerStopFire, orig_ServerStopFire);    // ServerStopFire - RVA: 0xC14D614
-    HOOK_LIB("libunity.so", "0x50EC794", hk_get_ShotCost, orig_get_ShotCost);        // get_ShotCost - RVA: 0x50EC794
-    HOOK_LIB("libunity.so", "0x510CE2C", hk_IsAmmoFree, orig_IsAmmoFree);            // IsAmmoFree - RVA: 0x510CE2C
+	HOOK_LIB("libunity.so", "0x50EB73C", hk_AmmoCanFire, orig_AmmoCanFire);         
+    HOOK_LIB("libunity.so", "0x5107904", hk_HasAmmo, orig_HasAmmo);                 
+    HOOK_LIB("libunity.so", "0xC14E570", hk_HasAmmo_IgnoreInfinite, orig_HasAmmo_IgnoreInfinite);
+    HOOK_LIB("libunity.so", "0xC14D614", hk_ServerStopFire, orig_ServerStopFire);   
+    HOOK_LIB("libunity.so", "0x50EC794", hk_get_ShotCost, orig_get_ShotCost);       
+    HOOK_LIB("libunity.so", "0x510CE2C", hk_IsAmmoFree, orig_IsAmmoFree);           
  
      //-- Long Execute
     HOOK_LIB("libunity.so", "0x5947970", CheckTargetIsValid_DyingInAzurGameMode_Hook, orig_CheckTargetIsValid_DyingInAzurGameMode);
@@ -1441,7 +1368,7 @@ inline void InitializeAllHooks() {
     DobbyHook((void *) getAbsoluteAddress("libunity.so", 0x54BC450), (void *)  &PlayerPawn_IsUnderWaterSurface, (void **) &oPlayerPawn_IsUnderWaterSurface); 
     DobbyHook((void *) getAbsoluteAddress("libunity.so", 0x757162C), (void *)  &CheckInWaterComponent_get_CurrentWaterSurfaceHeight, (void **) &oCheckInWaterComponent_get_CurrentWaterSurfaceHeight); 
 
-  ///Camera Pov
+  //-- Camera POV
   DobbyHook((void *) getAbsoluteAddress("libunity.so", 0xC347950), (void *)  &InputSettingConfig_Instant_GetMainCameraFov_3p, (void **) &oInputSettingConfig_Instant_GetMainCameraFov_3p); 
 
     //-- Unlock Blueprints

@@ -156,6 +156,7 @@ struct sWeaponAim {
         bool ShowFov;
         bool Crosshair;
         bool Aimline;
+        bool Hitbox;
     };
     sESPMenu ESPMenu{0};
     
