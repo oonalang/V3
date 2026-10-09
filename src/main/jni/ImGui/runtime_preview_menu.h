@@ -593,6 +593,7 @@ inline void DrawRuntimeEspPreviewPanel(const ImVec2 &min, const ImVec2 &size) {
 
     const char *enemy = "Enemy";
     const ImVec2 enemySz = textFont->CalcTextSizeA(12.0f, FLT_MAX, 0.0f, enemy);
+    const ImVec2 boxCenter = ImVec2((boxMin.x + boxMax.x) * 0.5f, (boxMin.y + boxMax.y) * 0.5f);
     drawList->AddText(textFont, 12.0f,
         ImVec2(boxCenter.x - enemySz.x * 0.5f, boxMin.y - 27.0f), IM_COL32(255, 64, 64, 255), enemy);
 
