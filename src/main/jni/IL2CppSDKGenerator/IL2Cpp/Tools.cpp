@@ -1,6 +1,5 @@
 #include <android/log.h>
 #include <libgen.h>
-#include <fcntl.h>
 #include <inttypes.h>
 #include <jni.h>
 #include <unistd.h>
@@ -90,12 +89,15 @@ bool Tools::PVM_WriteAddr(void *addr, void *buffer, size_t length) {
     return pvm(addr, buffer, length, true);
 }
 
+static uint8_t tools_isvalid_buf[4] = {0,0,0,0};
+
 bool Tools::IsPtrValid(void *addr) {
-    static int fd = -1;
-    if (fd == -1) {
-        fd = open("/dev/random", O_WRONLY);
-    }
-    return write(fd, addr, 4) >= 0;
+    // A valid pointer is non-null and points into readable mapped memory.
+    // Use process_vm_readv (via pvm) to probe the page instead of writing
+    // arbitrary pointer bytes into /dev/random (which corrupted the entropy pool
+    // and never actually validated anything).
+    if (addr == nullptr) return false;
+    return pvm(addr, tools_isvalid_buf, sizeof tools_isvalid_buf);
 }
 
 uintptr_t Tools::GetBaseAddress(const char *name) {
