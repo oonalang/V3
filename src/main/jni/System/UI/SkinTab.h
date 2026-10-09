@@ -545,7 +545,7 @@ case 0:
                         if (!charModel)
                             continue;
 
-                        auto* cf = (CharacterModelFields*)((uintptr_t)charModel + 0x10);
+                        auto* cf = (CharacterModelFields*)((uintptr_t)charModel + 0x18);
 
                         if (cf->Traitor1P == selTraitor1P ||
                             cf->Traitor3P == selTraitor3P ||
@@ -572,7 +572,7 @@ case 0:
                         if (!itemRes)
                             continue;
 
-                        auto* itf = (ItemResourceFields*)((uintptr_t)itemRes + 0x10);
+                        auto* itf = (ItemResourceFields*)((uintptr_t)itemRes + 0x18);
 
                         if (itf->ID == selItemID ||
                             itf->ID == 100301208) {
@@ -600,7 +600,7 @@ case 0:
                         if (!roles)
                             continue;
 
-                        auto* rf = (RoleConfFields*)((uintptr_t)roles + 0x10);
+                        auto* rf = (RoleConfFields*)((uintptr_t)roles + 0x18);
 
                         if (rf->ID == selRoleID ||
                             rf->ID == 100301208) {
@@ -622,7 +622,7 @@ case 0:
                         if (!pack)
                             continue;
 
-                        auto* pf = (RolePackFields*)((uintptr_t)pack + 0x10);
+                        auto* pf = (RolePackFields*)((uintptr_t)pack + 0x18);
 
                         if (pf->RolePackID == selPackID &&
                             pf->LobbySceneType == 0 &&
@@ -675,7 +675,7 @@ case 1:
 
             for (auto m : SkinSnapshot(CharacterModelConfigInstance)) {
 
-                auto* cf = (CharacterModelFields*)((uintptr_t)m + 0x10);
+                auto* cf = (CharacterModelFields*)((uintptr_t)m + 0x18);
 
                 if (cf->Traitor1P == sT1P ||
                     cf->Traitor1P == 710001101) {
