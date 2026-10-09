@@ -360,10 +360,12 @@ inline void* CalcDamageInfoInstantHit(void* instance, void** inImpactInfo, unsig
     g_hitboxDamageInfo = (uintptr_t)damageInfo;
     if (Config.ExtraMenu.Hit && damageInfo != NULL) {
        const uintptr_t di = (uintptr_t)damageInfo;
-        const Vector3 hitPos = *(const Vector3*)(di + 0x30);
 
+       // EHitGroupSelect::HitGroupAuto (0) = the hitbox code decides. In that case
+       // trust the headzone flag the ray test set when it passed through the head
+       // sphere; the old fallback that re-derived a headshot from the damage-info
+       // hit point was unreliable and is what made headshots stop landing.
        int hitGroup = EHitGroup_Body;
-
         switch (Config.Aim.HitGroup) {
             case HitGroupHead:      hitGroup = EHitGroup_Head;      break;
             case HitGroupHand:      hitGroup = EHitGroup_Hand;      break;
@@ -374,15 +376,6 @@ inline void* CalcDamageInfoInstantHit(void* instance, void** inImpactInfo, unsig
             default: {
                if (g_hitboxHitHead) {
                     hitGroup = EHitGroup_Head;
-                } else {
-                    const float headBand = ImClamp(Config.ExtraMenu.TuneHitboxHeadBand, 0.0f, 1.5f);
-                    Pawn* accPawn = (Pawn*)g_hitboxHitPawn;
-                    if (Tools::IsPtrValid(accPawn)) {
-                        const Vector3 head = accPawn->get_HeadPosition();
-                        if (hitPos.y >= head.y - headBand) {
-                            hitGroup = EHitGroup_Head;
-                        }
-                    }
                 }
                 break;
             }

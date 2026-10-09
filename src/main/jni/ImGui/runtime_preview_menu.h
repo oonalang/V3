@@ -540,17 +540,20 @@ inline void DrawRuntimeEspPreviewPanel(const ImVec2 &min, const ImVec2 &size) {
     const float bodyRadius = (0.5f + 0.375f * hitboxScale) * charHeight * 0.15f;
     const float bodyTop = charCenter.y - charHeight * 0.45f;
     const float bodyBot = charCenter.y + charHeight * 0.25f;
-    
-    // Draw body as 3D sphere (circle in preview)
-    drawList->AddCircleFilled(charCenter, bodyRadius, IM_COL32(180, 180, 180, 200));
-    drawList->AddCircle(charCenter, bodyRadius, IM_COL32(142, 134, 246, 255), 0, 2.0f);
-    
+
+    // Hitbox preview: only show the body+head spheres when both the Hit toggle
+    // and the ESP Hitbox toggle are on, matching the in-game ESP behavior.
+    if (Config.ExtraMenu.Hit && Config.ESPMenu.Hitbox) {
+        // Body sphere (scaled with HitboxScale)
+        drawList->AddCircleFilled(charCenter, bodyRadius, IM_COL32(180, 180, 180, 200));
+        drawList->AddCircle(charCenter, bodyRadius, IM_COL32(142, 134, 246, 255), 0, 2.0f);
+
         const float headSphereRadius = (0.25f + 0.125f * hitboxScale) * charHeight * 0.15f;
-    const ImVec2 headCenter(charCenter.x, bodyTop - headSphereRadius * 2.0f);
-    drawList->AddCircleFilled(headCenter, headSphereRadius, IM_COL32(200, 200, 200, 200));
-    drawList->AddCircle(headCenter, headSphereRadius, IM_COL32(255, 48, 48, 255), 0, 2.0f);
-    
-        if (Config.ExtraMenu.Hit) {
+        const ImVec2 headCenter(charCenter.x, bodyTop - headSphereRadius * 2.0f);
+        drawList->AddCircleFilled(headCenter, headSphereRadius, IM_COL32(200, 200, 200, 200));
+        drawList->AddCircle(headCenter, headSphereRadius, IM_COL32(255, 48, 48, 255), 0, 2.0f);
+
+        // Total hitbox extent outline
         const float totalHitboxRadius = bodyRadius + headSphereRadius * 2.0f;
         drawList->AddCircle(charCenter, bodyRadius + headSphereRadius * 1.5f, IM_COL32(255, 255, 255, 180), 0, 1.0f);
     }

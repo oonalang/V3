@@ -1003,7 +1003,8 @@ void DrawESP(ImDrawList *draw, int sWidth, int sHeight, float density) {
                     }
                 }
 
-                // Draw hitbox overlay
+                // Draw hitbox overlay (independent of the Box toggle so the hitbox
+                // can be shown on its own when ESP Hitbox is enabled).
                 DrawHitbox(draw, pEnemyPawn_rootPos, pEnemyPawn_headPos, sHeight, boxColor, boxThickness);
 
                 if (Config.ESPMenu.EspStyle == EspStyleTarget::EspStyle3DSphere) {
