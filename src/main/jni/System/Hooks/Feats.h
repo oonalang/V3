@@ -615,13 +615,13 @@ inline void ApplyForbidKickOff(bool enable)
 // handler.
 inline void ApplyForbidKickOffOnLogin()
 {
-    if (!Config.ExtraMenu.ForbidKickOff)
+    if (!Config.ExtraMenu.ForbidKickOff || !Config.ExtraMenu.ForbidKickOffOnLogin)
         return;
-   if (Config.ExtraMenu.ForbidKickOffOnLogin)
-    {
-        ApplyForbidKickOff(true);
-        Config.ExtraMenu.ForbidKickOffOnLogin = false;
-    }
+    // Safe to call repeatedly (idempotent): the flag clears on the first run so a
+    // stray re-entry from the per-frame post-login hooks does not hammer the il2cpp
+    // field writes or dereference a half-initialized ForbidKickOffHandler.
+    ApplyForbidKickOff(true);
+    Config.ExtraMenu.ForbidKickOffOnLogin = false;
 }
 
 //-- Long Slide

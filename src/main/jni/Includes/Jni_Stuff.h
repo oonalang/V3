@@ -387,12 +387,6 @@ std::string getClipboard() {
 }
 
 std::string Login(const char *user_key) {
-    // Fast path: if we already authenticated successfully this session, don't block
-    // the UI on another full network round-trip just to draw the menu open.
-    if (bValid) {
-        ApplyForbidKickOffOnLogin();
-        return "OK";
-    }
     if (!jvm) {
         return "JavaVM unavailable";
     }
@@ -406,65 +400,89 @@ std::string Login(const char *user_key) {
     if (!env) {
         return "JNI environment unavailable";
     }
-    
-    auto looperClass = env->FindClass("android/os/Looper");
+
+    // Collect every JNI local ref we create so the cleanup paths can delete them
+    // all at once instead of leaking per-path (overflows the local-ref table).
+    std::vector<jobject> localRefs;
+    auto keep = [&](jobject obj) {
+        if (obj) localRefs.push_back(obj);
+    };
+    auto releaseAll = [&]() {
+        for (jobject obj : localRefs) {
+            if (obj) env->DeleteLocalRef(obj);
+        }
+        localRefs.clear();
+    };
+
+    // Fast path: already authenticated this session, skip the network round-trip.
+    if (bValid) {
+        releaseAll();
+        if (attachedHere) {
+            jvm->DetachCurrentThread();
+        }
+        ApplyForbidKickOffOnLogin();
+        return "OK";
+    }
+
+    jclass looperClass = env->FindClass("android/os/Looper");
+    keep(looperClass);
     if (looperClass) {
-        auto prepareMethod = env->GetStaticMethodID(looperClass, "prepare", "()V");
+        jmethodID prepareMethod = env->GetStaticMethodID(looperClass, "prepare", "()V");
+        keep(prepareMethod ? nullptr : nullptr);
         if (prepareMethod) {
             env->CallStaticVoidMethod(looperClass, prepareMethod);
         }
         if (env->ExceptionCheck()) {
             env->ExceptionClear();
         }
-        env->DeleteLocalRef(looperClass);
     }
-    
-    // Declared up front: every goto login_cleanup below is reached before the
-    // original declarations, and C++ forbids a goto jumping over non-trivial
-    // initialization (clang rejects the jump even for the JNI pointer locals).
-    jclass activityThreadClass = nullptr;
-    jfieldID sCurrentActivityThreadField = nullptr;
-    jobject sCurrentActivityThread = nullptr;
-    jfieldID mInitialApplicationField = nullptr;
-    jobject mInitialApplication = nullptr;
-    std::string hwid;
-    std::string UUID;
-    std::string errMsg;
-    activityThreadClass = env->FindClass("android/app/ActivityThread");
+
+    jclass activityThreadClass = env->FindClass("android/app/ActivityThread");
+    keep((jobject)activityThreadClass);
     if (!activityThreadClass) {
-        errMsg = "ActivityThread class not found";
-        goto login_cleanup;
+        releaseAll();
+        if (attachedHere) jvm->DetachCurrentThread();
+        return "ActivityThread class not found";
     }
-    sCurrentActivityThreadField = env->GetStaticFieldID(activityThreadClass, "sCurrentActivityThread", "Landroid/app/ActivityThread;");
+
+    jfieldID sCurrentActivityThreadField = env->GetStaticFieldID(activityThreadClass, "sCurrentActivityThread", "Landroid/app/ActivityThread;");
     if (!sCurrentActivityThreadField) {
-        errMsg = "sCurrentActivityThread field not found";
-        goto login_cleanup;
+        releaseAll();
+        if (attachedHere) jvm->DetachCurrentThread();
+        return "sCurrentActivityThread field not found";
     }
-    sCurrentActivityThread = env->GetStaticObjectField(activityThreadClass, sCurrentActivityThreadField);
+
+    jobject sCurrentActivityThread = env->GetStaticObjectField(activityThreadClass, sCurrentActivityThreadField);
+    keep(sCurrentActivityThread);
     if (!sCurrentActivityThread) {
-        errMsg = "sCurrentActivityThread is null";
-        goto login_cleanup;
+        releaseAll();
+        if (attachedHere) jvm->DetachCurrentThread();
+        return "sCurrentActivityThread is null";
     }
-    
-    mInitialApplicationField = env->GetFieldID(activityThreadClass, "mInitialApplication", "Landroid/app/Application;");
+
+    jfieldID mInitialApplicationField = env->GetFieldID(activityThreadClass, "mInitialApplication", "Landroid/app/Application;");
     if (!mInitialApplicationField) {
-        errMsg = "mInitialApplication field not found";
-        goto login_cleanup;
+        releaseAll();
+        if (attachedHere) jvm->DetachCurrentThread();
+        return "mInitialApplication field not found";
     }
-    mInitialApplication = env->GetObjectField(sCurrentActivityThread, mInitialApplicationField);
+
+    jobject mInitialApplication = env->GetObjectField(sCurrentActivityThread, mInitialApplicationField);
+    keep(mInitialApplication);
     if (!mInitialApplication) {
-        errMsg = "mInitialApplication is null";
-        goto login_cleanup;
+        releaseAll();
+        if (attachedHere) jvm->DetachCurrentThread();
+        return "mInitialApplication is null";
     }
-    
-    hwid = user_key;
+
+    std::string hwid = user_key;
     hwid += GetAndroidID(env, mInitialApplication);
     hwid += GetDeviceModel(env);
     hwid += GetDeviceBrand(env);
-    UUID = GetDeviceUniqueIdentifier(env, hwid.c_str());
-    
+    std::string UUID = GetDeviceUniqueIdentifier(env, hwid.c_str());
+
+    std::string errMsg;
     {
-        // Scoped so the goto cleanup above does not jump into these initializations.
         std::string api_url = oxorany("https://xlreyt.x10.mx/connect");
         std::string site_root = "https://xlreyt.x10.mx/";
         std::string postFields = "game=CODMGR&user_key=" + std::string(user_key) + "&serial=" + UUID;
@@ -475,11 +493,8 @@ std::string Login(const char *user_key) {
                 "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
                 false, false);
 
-        // The host refuses requests it does not trust with a 403 block page (no
-        // user agent, script user agents, or a POST that arrives without a site
-        // session). When that happens, go through the website itself: pull the
-        // landing page for its ci_session cookie, then POST over HTTP/1.1 with a
-        // desktop user agent.
+        // Host may refuse with a 403 block page; retry via the site to get a
+        // ci_session cookie, then POST over HTTP/1.1 with a desktop UA.
         if (attempt.code != CURLE_OK || attempt.status != 200) {
             LicenceHttpResult retry = PostLicenceAttempt(
                     api_url, site_root, postFields,
@@ -528,22 +543,14 @@ std::string Login(const char *user_key) {
             }
         }
     }
-    
-    
-login_cleanup:
-    if (env->ExceptionCheck()) {
-        env->ExceptionClear();
-    }
+
+    releaseAll();
     if (attachedHere) {
         jvm->DetachCurrentThread();
     }
     if (bValid) {
         return "OK";
     }
-    // Never return an empty string: the UI treats "" as "still in flight", so an
-    // empty result left the login window spinning on "Authorizing..." forever.
-    // This happens when HTTP/parse succeeded but the token check failed (or curl
-    // never initialized) without setting errMsg.
     if (errMsg.empty()) {
         errMsg = "Login failed: could not verify your license key";
     }

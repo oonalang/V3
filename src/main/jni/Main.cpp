@@ -1664,8 +1664,12 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
 
     // Rename card / report spoof: keep the local player's own profile in sync with
     // the menu values (report spoof is applied last so its decoy identity wins).
-    ApplyRenameCard();
-    ApplyReportSpoofIdentity();
+    // Defend against the first frames right after login where get_LocalPawn() can
+    // still return a half-baked pointer and dereferencing its offsets crashes.
+    if (Tools::IsPtrValid(GamePlay::get_LocalPawn())) {
+        ApplyRenameCard();
+        ApplyReportSpoofIdentity();
+    }
 
     ImDrawList *draw = ImGui::GetBackgroundDrawList();
 
