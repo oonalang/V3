@@ -1595,8 +1595,6 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
         // so small ImGui drags (wheel, slider) feel responsive instead of floaty.
         io.MouseDoubleClickTime = 0.22f;
         io.MouseDragThreshold = 1.4f;
-        // Smoother frame pacing feel for the animated menu chrome.
-        io.DeltaClock = nullptr;
         ImGui_ImplOpenGL3_Init("#version 300 es");
 
         ImFontConfig icomoon_logo_config;
@@ -2376,14 +2374,13 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                                         if (ImGui::IsItemHovered()) {
                                             ImGui::SetTooltip("Grab the highlighted enemy's name into the rename field.");
                                         }
-                                    }
 
                                         ImGui::TextUnformatted("Name Card GID (0 = none)");
                                         ImGui::AstralInput("##rename_gid", renameCardGidBuf, sizeof(renameCardGidBuf), ImVec2(ImGui::GetContentRegionAvail().x - 10.0f, 40.0f), nullptr);
                                         if (ImGui::IsItemClicked()) showKeyboard = true;
                                         if (showKeyboard && ImGui::IsItemActive()) RenderVirtualKeyboard("##VirtualKeyboardRenameGid", renameCardGidBuf, sizeof(renameCardGidBuf), &showKeyboard);
                                         Config.ExtraMenu.RenameCardGid = atoi(renameCardGidBuf);
-                                    }
+                                        }
 
                                     custom::Separator_line();
                                     custom::Checkbox("Forbid Kick-Off", &Config.ExtraMenu.ForbidKickOff);
