@@ -644,7 +644,7 @@ void LoadCharacterSkins() {
         if (!X0 || !Tools::IsPtrValid(X0))
             continue;
 
-        auto *X1 = (CharacterModelFields *)((uintptr_t)X0 + 0x10);
+        auto *X1 = (CharacterModelFields *)((uintptr_t)X0 + 0x18);
 
         if (!Tools::IsPtrValid(X1))
             continue;
@@ -670,7 +670,7 @@ void LoadCharacterSkins() {
             if (!Y0 || !Tools::IsPtrValid(Y0))
                 continue;
 
-            auto *Y1 = (ItemResourceFields *)((uintptr_t)Y0 + 0x10);
+            auto *Y1 = (ItemResourceFields *)((uintptr_t)Y0 + 0x18);
 
             if (!Tools::IsPtrValid(Y1))
                 continue;
@@ -694,7 +694,7 @@ void LoadCharacterSkins() {
                 if (!Z0 || !Tools::IsPtrValid(Z0))
                     continue;
 
-                auto *Z1 = (RoleConfFields *)((uintptr_t)Z0 + 0x10);
+                auto *Z1 = (RoleConfFields *)((uintptr_t)Z0 + 0x18);
 
                 if (!Tools::IsPtrValid(Z1))
                     continue;
@@ -724,7 +724,7 @@ void LoadCharacterSkins() {
                     if (!RP || !Tools::IsPtrValid(RP))
                         continue;
 
-                    auto *rpF = (RolePackFields *)((uintptr_t)RP + 0x10);
+                    auto *rpF = (RolePackFields *)((uintptr_t)RP + 0x18);
 
                     if (!Tools::IsPtrValid(rpF))
                         continue;
