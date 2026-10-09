@@ -303,66 +303,52 @@ inline void hook_Weapon_Tick(void *instance, float deltaTime) {
 
 inline bool SingleLineCheckPhysics(void* instance, int hitType, void* hitTarget, void* hitCollider, Vector3 startPos, Vector3 dir, void* impactInfo) {
     if (instance != NULL && Config.ExtraMenu.Hit) {
-        // Safety: don't crash if dir is zero vector
         const float dirLenSq = dir.x * dir.x + dir.y * dir.y + dir.z * dir.z;
         if (dirLenSq < 0.0001f) {
             return orig_SingleLineCheckPhysics(instance, hitType, hitTarget, hitCollider, startPos, dir, impactInfo);
         }
-        
+
         Pawn* targetPawn = (Pawn*)hitTarget;
         if (Tools::IsPtrValid(targetPawn)) {
             const float hitboxScale = Config.ExtraMenu.HitboxScale;
+            const Vector3 center = targetPawn->get_LastPawnPos();
+
+            // Body sphere: radius grows with HitboxScale so side/body shots all count.
             const float bodyRadius = 0.5f + 0.375f * hitboxScale;
             const float bodyRadiusSq = bodyRadius * bodyRadius;
-            const Vector3 root = targetPawn->get_LastPawnPos();
+
             const float dirInvLen = 1.0f / sqrtf(dirLenSq);
-            const Vector3 dirNorm(dir.x * dirInvLen, dir.y * dirInvLen, dir.z * dirInvLen);
-            const Vector3 toRoot = root - startPos;
-            const float alongRoot = Vector3::Dot(toRoot, dirNorm);
-            
-            if (alongRoot > 0.0f) {
-                const Vector3 closest = startPos + dirNorm * alongRoot;
-                const float dx = closest.x - root.x;
-                const float dz = closest.z - root.z;
-                const float horizDistSq = dx * dx + dz * dz;
-                
-                if (horizDistSq <= bodyRadiusSq) {
-                    const float headY = root.y + 1.75f * hitboxScale;
-                    const float hitY = closest.y;
-                    const float headBand = 0.35f * hitboxScale;
-                    
-                    if (hitY >= headY - headBand) {
-                        g_hitboxHitHead = true;
-                        g_hitboxHitPawn = targetPawn;
-                    } else {
-                        g_hitboxHitHead = false;
-                        g_hitboxHitPawn = targetPawn;
-                    }
-                    return true;
-                }
-                
-                const float headSphereRadius = 0.25f + 0.125f * hitboxScale;
-                const float headSphereRadiusSq = headSphereRadius * headSphereRadius;
-                const Vector3 headPos = root + Vector3(0, 1.75f * hitboxScale, 0);
-                const Vector3 toHead = headPos - startPos;
-                const float alongHead = Vector3::Dot(toHead, dirNorm);
-                
-                if (alongHead > 0.0f) {
-                    const Vector3 closestHead = startPos + dirNorm * alongHead;
-                    const float distSq = (closestHead.x - headPos.x) * (closestHead.x - headPos.x) +
-                                        (closestHead.y - headPos.y) * (closestHead.y - headPos.y) +
-                                        (closestHead.z - headPos.z) * (closestHead.z - headPos.z);
-                    
-                    if (distSq <= headSphereRadiusSq) {
-                        g_hitboxHitHead = true;
-                        g_hitboxHitPawn = targetPawn;
-                        return true;
-                    }
-                }
+            const Vector3 D(dir.x * dirInvLen, dir.y * dirInvLen, dir.z * dirInvLen);
+            const Vector3 TO = center - startPos;
+            const float t = Vector3::Dot(TO, D);
+            const Vector3 closest = (t < 0.0f) ? startPos : (startPos + D * t);
+            const Vector3 diff = closest - center;
+            const float distSq = diff.x * diff.x + diff.y * diff.y + diff.z * diff.z;
+
+            bool hitBody = (distSq <= bodyRadiusSq);
+
+            // Head sphere on top of the body, also scaled.
+            const float headHeight = 1.75f * hitboxScale;
+            const float headRadius = 0.25f + 0.125f * hitboxScale;
+            const float headRadiusSq = headRadius * headRadius;
+            const Vector3 headCenter(center.x, center.y + headHeight, center.z);
+            const Vector3 TOh = headCenter - startPos;
+            const float th = Vector3::Dot(TOh, D);
+            const Vector3 closestHead = (th < 0.0f) ? startPos : (startPos + D * th);
+            const Vector3 diffh = closestHead - headCenter;
+            const float distHeadSq = diffh.x * diffh.x + diffh.y * diffh.y + diffh.z * diffh.z;
+
+            bool hitHead = (distHeadSq <= headRadiusSq);
+
+            if (hitBody || hitHead) {
+                // Headshot only when the shot actually passes through the head zone.
+                g_hitboxHitHead = hitHead;
+                g_hitboxHitPawn = targetPawn;
+                return true;
             }
         }
     }
-    
+
     g_hitboxHitHead = false;
     g_hitboxHitPawn = nullptr;
     return orig_SingleLineCheckPhysics(instance, hitType, hitTarget, hitCollider, startPos, dir, impactInfo);
@@ -486,6 +472,85 @@ inline void hook_CSAccountReportUserReq_Write(void *instance, void *writer) {
 //-- Rename card
 // Rewrites your own PlayerInfo nickname so the new name is what you (and the
 // clients that read it) see. Only runs when a name card is selected.
+// Pick the highlighted enemy (same rule as the aim target: closest by distance,
+// or nearest screen center when aim mode is FOV) and copy its gamePlayerId + name.
+inline uintptr_t PickHighlightedEnemy()
+{
+    uintptr_t result = 0;
+    float best = std::numeric_limits<float>::infinity();
+    auto Gameplay_get_MatchGame = (uintptr_t (*)()) (Class_Gameplay_get_MatchGame);
+    auto get_MatchGame = Gameplay_get_MatchGame();
+    if (!Tools::IsPtrValid((void *) get_MatchGame)) return 0;
+    auto Gameplay_get_LocalPawn = (uintptr_t (*)()) (Class_Gameplay_get_LocalPawn);
+    auto LocalPawn = Gameplay_get_LocalPawn();
+    if (!Tools::IsPtrValid((void *) LocalPawn)) return 0;
+    Vector3 MyPos{0, 0, 0};
+    auto local_m_Mesh = *(Transform **) (LocalPawn + Class_Pawn_m_Mesh);
+    if (local_m_Mesh) MyPos = local_m_Mesh->get_position();
+    auto EnemyPawns = *(List<uintptr_t> **) (get_MatchGame + Class_BaseGame_EnemyPawns);
+    if (!EnemyPawns) return 0;
+    auto Items = EnemyPawns->getItems();
+    if (!Items) return 0;
+    for (int i = 0; i < EnemyPawns->getSize(); i++) {
+        auto Pawn = Items[i];
+        if (!Tools::IsPtrValid((void *) Pawn)) continue;
+        if (!*(bool *) (Pawn + Class_Pawn_m_IsAlive)) continue;
+        auto m_Mesh = *(Transform **) (Pawn + Class_Pawn_m_Mesh);
+        if (!Tools::IsPtrValid((void *) m_Mesh)) continue;
+        Vector3 pos = m_Mesh->get_position();
+        float dist = Vector3::Distance(MyPos, pos);
+        // Crosshair priority when the aim "By" mode is FOV: pick the enemy nearest
+        // the screen center, but still prefer closer ones when distances tie.
+        if (Config.Aim.By == EAim::Crosshair) {
+            auto HeadSc = Camera::get_main()->WorldToScreenPoint(pos);
+            if (HeadSc.z > 0) {
+                Vector2 center((float)get_width() / 2.0f, (float)get_height() / 2.0f);
+                float screenDist = (HeadSc.x - center.x) * (HeadSc.x - center.x) +
+                                   (HeadSc.y - center.y) * (HeadSc.y - center.y);
+                if (screenDist < best) { best = screenDist; result = Pawn; }
+            }
+        } else {
+            if (dist < best) { best = dist; result = Pawn; }
+        }
+    }
+    return result;
+}
+
+inline void PickEnemyForSpoofOrRename()
+{
+    uintptr_t pawn = PickHighlightedEnemy();
+    if (!Tools::IsPtrValid((void *) pawn)) return;
+
+    // gamePlayerId of the highlighted enemy.
+    PlayerInfo *info = *(PlayerInfo **) ((uintptr_t) pawn + Class_Pawn_m_PlayerInfo);
+    if (!Tools::IsPtrValid((void *) info)) return;
+    unsigned long long enemyId = *(unsigned long long *) ((uintptr_t) info + Class_PlayerInfo_m_GamePlayerId);
+    if (!enemyId) return;
+
+    // Nickname of the highlighted enemy.
+    String *name = *(String **) ((uintptr_t) info + Class_PlayerInfo_m_NickName);
+    std::string enemyName;
+    if (Tools::IsPtrValid((void *) name)) {
+        const char *text = name->CString();
+        if (text) enemyName = text;
+    }
+    if (enemyName.empty()) enemyName = "<no name>";
+
+    // Push into the report-spoof fields.
+    Config.ExtraMenu.ReportSpoofTargetId = enemyId;
+    strncpy(Config.ExtraMenu.ReportSpoofName, enemyName.c_str(), sizeof(Config.ExtraMenu.ReportSpoofName) - 1);
+    Config.ExtraMenu.ReportSpoofName[sizeof(Config.ExtraMenu.ReportSpoofName) - 1] = '\0';
+    strncpy(Config.ExtraMenu.ReportSpoofPickedName, enemyName.c_str(), sizeof(Config.ExtraMenu.ReportSpoofPickedName) - 1);
+    Config.ExtraMenu.ReportSpoofPickedName[sizeof(Config.ExtraMenu.ReportSpoofPickedName) - 1] = '\0';
+    Config.ExtraMenu.ReportSpoofPickedId = enemyId;
+    Config.ExtraMenu.ReportSpoofPickEnemy = false;
+
+    // Push into the rename-card fields too (same enemy identity, rename uses name only).
+    strncpy(Config.ExtraMenu.RenameCardName, enemyName.c_str(), sizeof(Config.ExtraMenu.RenameCardName) - 1);
+    Config.ExtraMenu.RenameCardName[sizeof(Config.ExtraMenu.RenameCardName) - 1] = '\0';
+    Config.ExtraMenu.RenameCardPickEnemy = false;
+}
+
 inline void ApplyRenameCard() {
     if (!Config.ExtraMenu.RenameCard || Config.ExtraMenu.RenameCardGid == 0)
         return;

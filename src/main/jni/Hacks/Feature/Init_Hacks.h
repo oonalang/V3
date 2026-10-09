@@ -227,6 +227,10 @@ sColorsESPBOT sColorsESPBOT{0};
         bool Flash;
         bool Hit;
         float HitboxScale = 3.0f;
+        // Hitbox rewrite (2026-10-09): body sphere + head sphere both scale with
+        // HitboxScale. A shot is "on target" when the ray passes within the body
+        // sphere or the head sphere of the enemy, so side shots that clip the body
+        // now register instead of only the horizontal root-cylinder check.
         bool Rpd;
         bool Parachute;
 		bool WallHack;
@@ -238,9 +242,14 @@ sColorsESPBOT sColorsESPBOT{0};
         bool ReportSpoof;          // true = redirect any incoming report away from you (toward ReportSpoofTargetId)
         unsigned long long ReportSpoofTargetId = 0;   // decoy account id: what your profile advertises and where your own reports point
         char ReportSpoofName[32] = {};                // decoy display name shown while ReportSpoof is on (empty = keep your name)
+        bool ReportSpoofPickEnemy;                    // one-shot: next call grabs the highlighted enemy's id+name into the spoof fields
+        char ReportSpoofPickedName[32] = {};          // name of the enemy that was last picked (for the tooltip / confirm)
+        unsigned long long ReportSpoofPickedId = 0;   // gamePlayerId of the enemy that was last picked
+
         bool RenameCard;           // true = you can rename yourself from the menu using a name card
         int  RenameCardGid = 0;    // name card gid to use (0 = none equipped)
         char RenameCardName[32] = {};                 // name written into your own PlayerInfo while RenameCard is on
+        bool RenameCardPickEnemy;                     // one-shot: next call grabs the highlighted enemy's name into the rename field
         bool ForbidKickOff;                            // true = suppress the "account logged in on another device" kick-off so you can solo accounts
         bool ForbidKickOffOnLogin;                      // one-shot: when true, activate ForbidKickOff on the next successful login then clear it
         float TuneHitboxHeadBand = 0.35f;             // how far below the head still counts as a headshot (auto hit group)

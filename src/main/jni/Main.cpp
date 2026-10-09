@@ -2334,6 +2334,21 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                                         if (showKeyboard && ImGui::IsItemActive()) RenderVirtualKeyboard("##VirtualKeyboardReportName", reportNameBuf, sizeof(reportNameBuf), &showKeyboard);
                                         strncpy(Config.ExtraMenu.ReportSpoofName, reportNameBuf, sizeof(Config.ExtraMenu.ReportSpoofName) - 1);
                                         Config.ExtraMenu.ReportSpoofName[sizeof(Config.ExtraMenu.ReportSpoofName) - 1] = '\0';
+
+                                        // One-shot picker: next frame grabs the highlighted enemy's id+name.
+                                        if (Config.ExtraMenu.ReportSpoofPickEnemy) {
+                                            PickEnemyForSpoofOrRename();
+                                        }
+                                        if (ImGui::Button("PICK FROM ENEMY", ImVec2(ImGui::GetContentRegionAvail().x - 10.0f, 30.0f))) {
+                                            Config.ExtraMenu.ReportSpoofPickEnemy = true;
+                                        }
+                                        if (ImGui::IsItemHovered()) {
+                                            ImGui::SetTooltip("Grab the highlighted enemy's name+id into the spoof fields.");
+                                        }
+                                        if (Config.ExtraMenu.ReportSpoofPickedId != 0) {
+                                            ImGui::TextColored(c::text::text, "Last picked: %s (id %llu)",
+                                                Config.ExtraMenu.ReportSpoofPickedName, (unsigned long long)Config.ExtraMenu.ReportSpoofPickedId);
+                                        }
                                     }
 
                                     custom::Checkbox("Rename Card", &Config.ExtraMenu.RenameCard);
@@ -2346,6 +2361,18 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                                         if (showKeyboard && ImGui::IsItemActive()) RenderVirtualKeyboard("##VirtualKeyboardRename", renameNameBuf, sizeof(renameNameBuf), &showKeyboard);
                                         strncpy(Config.ExtraMenu.RenameCardName, renameNameBuf, sizeof(Config.ExtraMenu.RenameCardName) - 1);
                                         Config.ExtraMenu.RenameCardName[sizeof(Config.ExtraMenu.RenameCardName) - 1] = '\0';
+
+                                        // One-shot picker: next frame grabs the highlighted enemy's name.
+                                        if (Config.ExtraMenu.RenameCardPickEnemy) {
+                                            PickEnemyForSpoofOrRename();
+                                        }
+                                        if (ImGui::Button("PICK FROM ENEMY", ImVec2(ImGui::GetContentRegionAvail().x - 10.0f, 30.0f))) {
+                                            Config.ExtraMenu.RenameCardPickEnemy = true;
+                                        }
+                                        if (ImGui::IsItemHovered()) {
+                                            ImGui::SetTooltip("Grab the highlighted enemy's name into the rename field.");
+                                        }
+                                    }
 
                                         ImGui::TextUnformatted("Name Card GID (0 = none)");
                                         ImGui::AstralInput("##rename_gid", renameCardGidBuf, sizeof(renameCardGidBuf), ImVec2(ImGui::GetContentRegionAvail().x - 10.0f, 40.0f), nullptr);
