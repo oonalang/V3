@@ -303,31 +303,35 @@ inline void hook_Weapon_Tick(void *instance, float deltaTime) {
 
 inline bool SingleLineCheckPhysics(void* instance, int hitType, void* hitTarget, void* hitCollider, Vector3 startPos, Vector3 dir, void* impactInfo) {
     if (instance != NULL && Config.ExtraMenu.Hit) {
+        // Safety: don't crash if dir is zero vector
+        const float dirLenSq = dir.x * dir.x + dir.y * dir.y + dir.z * dir.z;
+        if (dirLenSq < 0.0001f) {
+            return orig_SingleLineCheckPhysics(instance, hitType, hitTarget, hitCollider, startPos, dir, impactInfo);
+        }
+        
         Pawn* targetPawn = (Pawn*)hitTarget;
         if (Tools::IsPtrValid(targetPawn)) {
             const float hitboxScale = Config.ExtraMenu.HitboxScale;
             const float bodyRadius = 0.5f + 0.375f * hitboxScale;
             const float bodyRadiusSq = bodyRadius * bodyRadius;
             const Vector3 root = targetPawn->get_LastPawnPos();
-            const Vector3 dirNorm = Vector3::Normalized(dir);
+            const float dirInvLen = 1.0f / sqrtf(dirLenSq);
+            const Vector3 dirNorm(dir.x * dirInvLen, dir.y * dirInvLen, dir.z * dirInvLen);
             const Vector3 toRoot = root - startPos;
             const float alongRoot = Vector3::Dot(toRoot, dirNorm);
             
             if (alongRoot > 0.0f) {
-               
                 const Vector3 closest = startPos + dirNorm * alongRoot;
                 const float dx = closest.x - root.x;
                 const float dz = closest.z - root.z;
                 const float horizDistSq = dx * dx + dz * dz;
                 
                 if (horizDistSq <= bodyRadiusSq) {
-                   
                     const float headY = root.y + 1.75f * hitboxScale;
                     const float hitY = closest.y;
                     const float headBand = 0.35f * hitboxScale;
                     
                     if (hitY >= headY - headBand) {
-                       
                         g_hitboxHitHead = true;
                         g_hitboxHitPawn = targetPawn;
                     } else {
@@ -337,7 +341,6 @@ inline bool SingleLineCheckPhysics(void* instance, int hitType, void* hitTarget,
                     return true;
                 }
                 
-               
                 const float headSphereRadius = 0.25f + 0.125f * hitboxScale;
                 const float headSphereRadiusSq = headSphereRadius * headSphereRadius;
                 const Vector3 headPos = root + Vector3(0, 1.75f * hitboxScale, 0);
