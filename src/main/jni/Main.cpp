@@ -1591,8 +1591,12 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
         io.IniFilename = NULL;
         io.LogFilename = NULL;
         io.ConfigFlags |= ImGuiConfigFlags_NoMouseCursorChange;
-        io.MouseDoubleClickTime = 0.3f;
-        io.MouseDragThreshold = 2.f;
+        // Interaction polish: quicker double-click window, tighter drag threshold
+        // so small ImGui drags (wheel, slider) feel responsive instead of floaty.
+        io.MouseDoubleClickTime = 0.22f;
+        io.MouseDragThreshold = 1.4f;
+        // Smoother frame pacing feel for the animated menu chrome.
+        io.DeltaClock = nullptr;
         ImGui_ImplOpenGL3_Init("#version 300 es");
 
         ImFontConfig icomoon_logo_config;

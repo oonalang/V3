@@ -98,10 +98,21 @@ namespace c
 
     inline void ApplyMainWindowStyle(ImGuiStyle& style)
     {
-        style.WindowPadding = ImVec2(0.0f, 0.0f);
-        style.ItemSpacing = ImVec2(10.0f * scale, 10.0f * scale);
-        style.WindowBorderSize = 0.0f;
-        style.ScrollbarSize = 8.0f * scale;
+        // Layout polish: tighter window padding, breathing room between items,
+        // no window border, rounded scrollbar area.
+        style.WindowPadding      = ImVec2(0.0f, 0.0f);
+        style.ItemSpacing        = ImVec2(10.0f * scale, 10.0f * scale);
+        style.ItemInnerSpacing   = ImVec2(6.0f * scale, 6.0f * scale);
+        style.WindowBorderSize   = 0.0f;
+        style.WindowRounding     = 6.0f;
+        style.FrameRounding      = 4.0f;
+        style.ButtonRounding     = 4.0f;
+        style.ScrollbarSize     = 8.0f * scale;
+        style.ScrollbarRounding  = 6.0f;
+        style.GrabMinSize       = 8.0f;
+        style.PopupRounding     = 6.0f;
+        style.ChildRounding     = 6.0f;
+        style.WindowMenuButtonOffset = ImVec2(0.0f, 0.0f);
     }
 
     inline float MainTopAreaHeight()
@@ -495,6 +506,47 @@ namespace main_runtime_theme
         style.Colors[ImGuiCol_ScrollbarGrab]         = ImVec4(ac.x*0.60f, ac.y*0.60f, ac.z*0.60f, 0.80f);
         style.Colors[ImGuiCol_ScrollbarGrabHovered]  = ImVec4(ac.x*0.80f, ac.y*0.80f, ac.z*0.80f, 0.90f);
         style.Colors[ImGuiCol_ScrollbarGrabActive]   = ImVec4(ac.x,       ac.y,       ac.z,       1.0f);
+
+        // ---- ImGui polish: fill the rest of the style so every widget inherits
+        // the theme instead of the default ImGui colors. Only touch the ones the
+        // project uses (child/popup/border/frame/checkbox/slider/tab/plot/separator
+        // etc.); leave SliderGrab/Button colors to the custom widget code which
+        // already pushes its own colors per-item.
+        style.Colors[ImGuiCol_ChildBg]          = ImVec4(bgCh.x, bgCh.y, bgCh.z, 0.92f);
+        style.Colors[ImGuiCol_PopupBg]          = ImVec4(bgW.x, bgW.y, bgW.z, 0.92f);
+        style.Colors[ImGuiCol_Border]           = ImVec4(bgCh.x + 0.06f, bgCh.y + 0.06f, bgCh.z + 0.06f, 0.55f);
+        style.Colors[ImGuiCol_FrameBg]         = ImVec4(bgCo.x, bgCo.y, bgCo.z, 0.62f);
+        style.Colors[ImGuiCol_FrameBgHovered]  = ImVec4(bgCo.x + 0.05f, bgCo.y + 0.05f, bgCo.z + 0.05f, 0.78f);
+        style.Colors[ImGuiCol_FrameBgActive]   = ImVec4(bgCo.x + 0.08f, bgCo.y + 0.08f, bgCo.z + 0.08f, 0.88f);
+        style.Colors[ImGuiCol_TitleBg]         = ImVec4(bgCh.x, bgCh.y, bgCh.z, 1.0f);
+        style.Colors[ImGuiCol_TitleBgActive]   = ImVec4(bgCh.x + 0.04f, bgCh.y + 0.04f, bgCh.z + 0.04f, 1.0f);
+        style.Colors[ImGuiCol_TitleBgCollapsed]= ImVec4(bgCh.x, bgCh.y, bgCh.z, 0.80f);
+        style.Colors[ImGuiCol_Header]         = ImVec4(bgCo.x + 0.03f, bgCo.y + 0.03f, bgCo.z + 0.03f, 0.90f);
+        style.Colors[ImGuiCol_HeaderHovered]  = ImVec4(ac.x*0.30f, ac.y*0.30f, ac.z*0.30f, 0.95f);
+        style.Colors[ImGuiCol_HeaderActive]   = ImVec4(ac.x*0.45f, ac.y*0.45f, ac.z*0.45f, 1.0f);
+        style.Colors[ImGuiCol_Separator]      = ImVec4(bgCh.x + 0.04f, bgCh.y + 0.04f, bgCh.z + 0.04f, 0.55f);
+        style.Colors[ImGuiCol_SeparatorHovered] = ImVec4(ac.x*0.55f, ac.y*0.55f, ac.z*0.55f, 0.80f);
+        style.Colors[ImGuiCol_SeparatorActive] = ImVec4(ac.x, ac.y, ac.z, 1.0f);
+        style.Colors[ImGuiCol_CheckMark]      = ImVec4(ac.x, ac.y, ac.z, 1.0f);
+        style.Colors[ImGuiCol_SliderGrab]     = ImVec4(ac.x, ac.y, ac.z, 0.90f);
+        style.Colors[ImGuiCol_SliderGrabActive] = ImVec4(ac.x, ac.y, ac.z, 1.0f);
+        style.Colors[ImGuiCol_Button]        = ImVec4(bgCo.x, bgCo.y, bgCo.z, 0.82f);
+        style.Colors[ImGuiCol_ButtonHovered] = ImVec4(bgCh.x + 0.06f, bgCh.y + 0.06f, bgCh.z + 0.06f, 0.92f);
+        style.Colors[ImGuiCol_ButtonActive]  = ImVec4(bgCh.x + 0.10f, bgCh.y + 0.10f, bgCh.z + 0.10f, 0.97f);
+        style.Colors[ImGuiCol_Tab]           = ImVec4(bgCh.x, bgCh.y, bgCh.z, 0.95f);
+        style.Colors[ImGuiCol_TabHovered]    = ImVec4(bgCh.x + 0.05f, bgCh.y + 0.05f, bgCh.z + 0.05f, 1.0f);
+        style.Colors[ImGuiCol_TabActive]     = ImVec4(bgCo.x, bgCo.y, bgCo.z, 1.0f);
+        style.Colors[ImGuiCol_TabSelected]   = ImVec4(bgCo.x, bgCo.y, bgCo.z, 1.0f);
+        style.Colors[ImGuiCol_TabSelectedOverline] = ImVec4(ac.x*0.70f, ac.y*0.70f, ac.z*0.70f, 1.0f);
+        style.Colors[ImGuiCol_TabDimmed]     = ImVec4(bgW.x, bgW.y, bgW.z, 0.45f);
+        style.Colors[ImGuiCol_TextDisabled]  = ImVec4(tMut.x*0.50f, tMut.y*0.50f, tMut.z*0.50f, 0.90f);
+        style.Colors[ImGuiCol_PlotLines]     = ImVec4(ac.x, ac.y, ac.z, 1.0f);
+        style.Colors[ImGuiCol_PlotLinesHovered] = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+        style.Colors[ImGuiCol_PlotHistogram] = ImVec4(ac.x*0.55f, ac.y*0.55f, ac.z*0.55f, 1.0f);
+        style.Colors[ImGuiCol_PlotHistogramHovered] = ImVec4(ac.x, ac.y, ac.z, 1.0f);
+        style.Colors[ImGuiCol_ModalWindowDimBg] = ImVec4(0.0f, 0.0f, 0.0f, 0.55f);
+        style.Colors[ImGuiCol_NavHighlight]  = ImVec4(ac.x, ac.y, ac.z, 0.55f);
+        style.Colors[ImGuiCol_NavWindowingHighlight] = ImVec4(ac.x, ac.y, ac.z, 0.30f);
     }
 }
 
