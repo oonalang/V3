@@ -4,6 +4,7 @@
 #include <jni.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <sys/uio.h>
 #include <openssl/evp.h>
 #include <openssl/pem.h>
 #include <openssl/rsa.h>
