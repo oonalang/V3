@@ -106,13 +106,13 @@ namespace c
         style.WindowBorderSize   = 0.0f;
         style.WindowRounding     = 6.0f;
         style.FrameRounding      = 4.0f;
-        style.ButtonRounding     = 4.0f;
+        style.GrabRounding       = 4.0f;
         style.ScrollbarSize     = 8.0f * scale;
         style.ScrollbarRounding  = 6.0f;
         style.GrabMinSize       = 8.0f;
         style.PopupRounding     = 6.0f;
         style.ChildRounding     = 6.0f;
-        style.WindowMenuButtonOffset = ImVec2(0.0f, 0.0f);
+        style.WindowMenuButtonPosition = ImGuiDir_None;
     }
 
     inline float MainTopAreaHeight()
@@ -536,9 +536,8 @@ namespace main_runtime_theme
         style.Colors[ImGuiCol_Tab]           = ImVec4(bgCh.x, bgCh.y, bgCh.z, 0.95f);
         style.Colors[ImGuiCol_TabHovered]    = ImVec4(bgCh.x + 0.05f, bgCh.y + 0.05f, bgCh.z + 0.05f, 1.0f);
         style.Colors[ImGuiCol_TabActive]     = ImVec4(bgCo.x, bgCo.y, bgCo.z, 1.0f);
-        style.Colors[ImGuiCol_TabSelected]   = ImVec4(bgCo.x, bgCo.y, bgCo.z, 1.0f);
-        style.Colors[ImGuiCol_TabSelectedOverline] = ImVec4(ac.x*0.70f, ac.y*0.70f, ac.z*0.70f, 1.0f);
-        style.Colors[ImGuiCol_TabDimmed]     = ImVec4(bgW.x, bgW.y, bgW.z, 0.45f);
+        style.Colors[ImGuiCol_TabUnfocused]        = ImVec4(bgW.x, bgW.y, bgW.z, 0.45f);
+        style.Colors[ImGuiCol_TabUnfocusedActive]  = ImVec4(bgCh.x, bgCh.y, bgCh.z, 0.85f);
         style.Colors[ImGuiCol_TextDisabled]  = ImVec4(tMut.x*0.50f, tMut.y*0.50f, tMut.z*0.50f, 0.90f);
         style.Colors[ImGuiCol_PlotLines]     = ImVec4(ac.x, ac.y, ac.z, 1.0f);
         style.Colors[ImGuiCol_PlotLinesHovered] = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
