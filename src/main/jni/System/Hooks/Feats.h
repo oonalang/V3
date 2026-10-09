@@ -311,37 +311,39 @@ inline bool SingleLineCheckPhysics(void* instance, int hitType, void* hitTarget,
         Pawn* targetPawn = (Pawn*)hitTarget;
         if (Tools::IsPtrValid(targetPawn)) {
             const float hitboxScale = Config.ExtraMenu.HitboxScale;
-            const Vector3 center = targetPawn->get_LastPawnPos();
+            // Real positions reported by the pawn itself -- not a guessed offset.
+            const Vector3 bodyCenter = targetPawn->get_LastPawnPos();
+            const Vector3 headCenter = targetPawn->get_HeadPosition();
 
-            // Body sphere: radius grows with HitboxScale so side/body shots all count.
-            const float bodyRadius = 0.5f + 0.375f * hitboxScale;
+            // Generous body sphere: base 0.5 plus 1.5x HitboxScale, so side/body
+            // shots all count and the slider actually enlarges the enemy a lot.
+            const float bodyRadius = 0.5f + 1.5f * hitboxScale;
             const float bodyRadiusSq = bodyRadius * bodyRadius;
 
             const float dirInvLen = 1.0f / sqrtf(dirLenSq);
             const Vector3 D(dir.x * dirInvLen, dir.y * dirInvLen, dir.z * dirInvLen);
-            const Vector3 TO = center - startPos;
+            const Vector3 TO = bodyCenter - startPos;
             const float t = Vector3::Dot(TO, D);
             const Vector3 closest = (t < 0.0f) ? startPos : (startPos + D * t);
-            const Vector3 diff = closest - center;
-            const float distSq = diff.x * diff.x + diff.y * diff.y + diff.z * diff.z;
+            const Vector3 diff = closest - bodyCenter;
+            const float distSq = diff.x*diff.x + diff.y*diff.y + diff.z*diff.z;
 
             bool hitBody = (distSq <= bodyRadiusSq);
 
-            // Head sphere on top of the body, also scaled.
-            const float headHeight = 1.75f * hitboxScale;
-            const float headRadius = 0.25f + 0.125f * hitboxScale;
+            // Head zone: real head sphere on the real head position, normal size.
+            // A shot is a headshot ONLY when the ray actually passes through that sphere.
+            const float headRadius = 0.2f + 0.1f * hitboxScale;
             const float headRadiusSq = headRadius * headRadius;
-            const Vector3 headCenter(center.x, center.y + headHeight, center.z);
             const Vector3 TOh = headCenter - startPos;
             const float th = Vector3::Dot(TOh, D);
             const Vector3 closestHead = (th < 0.0f) ? startPos : (startPos + D * th);
             const Vector3 diffh = closestHead - headCenter;
-            const float distHeadSq = diffh.x * diffh.x + diffh.y * diffh.y + diffh.z * diffh.z;
+            const float distHeadSq = diffh.x*diffh.x + diffh.y*diffh.y + diffh.z*diffh.z;
 
             bool hitHead = (distHeadSq <= headRadiusSq);
 
             if (hitBody || hitHead) {
-                // Headshot only when the shot actually passes through the head zone.
+                // Headshot only when the ray actually passes through the head sphere.
                 g_hitboxHitHead = hitHead;
                 g_hitboxHitPawn = targetPawn;
                 return true;
