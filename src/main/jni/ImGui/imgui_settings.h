@@ -245,6 +245,50 @@ namespace c
 
 namespace main_runtime_theme
 {
+    // Zenin skin: paints the widget palette red-accent charcoal. Declared above;
+    // this definition must appear after `c::` is fully parsed.
+    inline void applyZeninStandardStyle()
+    {
+            // Zenin palette: charcoal panels + red accent (#FF5A5C).
+            const ImColor accent  = ImColor(255, 90, 92, 255);
+            const ImColor panelHi = ImColor(32, 32, 35, 255);
+            const ImColor textGo  = ImColor(228, 228, 232, 255);
+            const ImColor textMut = ImColor(120, 120, 126, 255);
+            const ImColor sep     = ImColor(46, 46, 50, 200);
+
+            c::accent = accent.Value;
+
+            c::checkbox::background_on  = accent.Value;
+            c::checkbox::background_off = panelHi.Value;
+            c::checkbox::mark           = ImColor(255, 255, 255, 255).Value;
+            c::checkbox::circle_inactive = textMut.Value;
+
+            c::button::background          = ImColor(36, 36, 40, 255).Value;
+            c::button::background_hovered  = ImColor(46, 46, 52, 255).Value;
+            c::button::background_active   = ImColor(52, 52, 58, 255).Value;
+            c::button::outline             = ImColor(70, 70, 78, 180).Value;
+
+            c::child::background = ImColor(24, 24, 27, 255).Value;
+            c::child::cap        = ImColor(22, 22, 25, 245).Value;
+
+            c::page::background_active = ImColor(255, 90, 92, 70).Value;
+            c::page::background        = ImColor(28, 28, 32, 230).Value;
+            c::page::text_hov          = textGo.Value;
+            c::page::text              = textMut.Value;
+
+            c::elements::background         = ImColor(30, 30, 34, 240).Value;
+            c::elements::background_hovered = panelHi.Value;
+
+            c::widget::background   = ImColor(30, 30, 34, 240).Value;
+            c::widget::outlinecolor = ImColor(60, 60, 68, 210).Value;
+
+            c::text::text_active = ImColor(255, 255, 255, 255).Value;
+            c::text::text_hov    = accent.Value;
+            c::text::text        = ImColor(150, 150, 158, 245).Value;
+
+            c::separator = sep.Value;
+    }
+
     inline float g_menuHue = 0.679f;
 
     // ============================================================

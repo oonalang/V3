@@ -1796,11 +1796,19 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
 
         if (!g_LoginTextLoaded && VM != nullptr)
         {
+            // Dedicated transfer buffer: on devices where snprintf's locale
+            // handling or the strncpy tail interacts badly these copies crashed
+            // right after the login card appeared. memcpy into a stack buffer
+            // first, then clamp explicitly.
             if (LoadTextFromFile() && logintext[0] != '\0')
             {
-                strncpy(s, logintext, sizeof(s) - 1);
+                char staged[sizeof(s)];
+                std::memcpy(staged, logintext, sizeof(staged));
+                staged[sizeof(staged) - 1] = '\0';
+                std::memcpy(s, staged, sizeof(s));
                 s[sizeof(s) - 1] = '\0';
                 g_LoginTextLoaded = true;
+                LOGI("login: prefill loaded (%zu chars)", strlen(s));
             }
         }
 
@@ -1833,8 +1841,30 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
 
                 const ImVec2 login_size = ImVec2(640, 460);
 
-                // Redesigned card: glow + glass + shield logo + centered title.
-                redesign::DrawLoginChrome(draw, pos, login_size);
+                // Zenin-styled auth glass: dark charcoal shell, red accent edge,
+                // rounded shield badge + single-tone wordmark. Same layout slots
+                // as before so every handler below keeps working.
+                {
+                    draw->AddRectFilled(pos, pos + login_size, zenin::T::WindowBg, zenin::T::RWindow);
+                    draw->AddRect(pos, pos + login_size, IM_COL32(36, 36, 40, 220), zenin::T::RWindow, 0, 1.3f);
+                    draw->AddRectFilled(pos, ImVec2(pos.x + 3.0f, pos.y + login_size.y), zenin::T::Accent, zenin::T::RWindow, ImDrawFlags_RoundCornersLeft);
+
+                    ImFont* titleFont = custom::shell::GetTitleFont();
+                    ImFont* iconFont  = custom::shell::GetIconFont();
+
+                    const ImVec2 logoC(pos.x + login_size.x * 0.5f, pos.y + 58.0f);
+                    draw->AddCircleFilled(logoC, 36.0f, IM_COL32(26, 26, 29, 255), 48);
+                    draw->AddCircle(logoC, 36.0f, zenin::T::Accent, 48, 2.2f);
+                    if (iconFont) {
+                        const ImVec2 isz = custom::shell::MeasureText(iconFont, 26.0f, ICON_FA_SHIELD_ALT);
+                        draw->AddText(iconFont, 26.0f, ImVec2(logoC.x - isz.x * 0.5f, logoC.y - isz.y * 0.5f), zenin::T::Accent, ICON_FA_SHIELD_ALT);
+                    }
+
+                    const char* sub = "SIGN IN WITH YOUR LICENSE KEY";
+                    ImFont* textFont = font::inter_semibold ? font::inter_semibold : ImGui::GetFont();
+                    const ImVec2 ssz = textFont ? textFont->CalcTextSizeA(15.0f, FLT_MAX, 0.0f, sub) : ImGui::CalcTextSize(sub);
+                    draw->AddText(textFont, 15.0f, ImVec2(pos.x + (login_size.x - ssz.x) * 0.5f, pos.y + 108.0f), zenin::T::TextMut, sub);
+                }
 
                 // All interactive rows below the chrome (logo block ends at y=166).
                 const float rowW = 480.0f;
@@ -1854,9 +1884,14 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                     const ImVec2 buttonMin = ImGui::GetItemRectMin();
                     const ImVec2 buttonMax = ImGui::GetItemRectMax();
 
-                    draw->AddRectFilled(buttonMin, buttonMax, hovered ? redesign::Theme::BgHover() : dmFrame, 12.0f);
-                    const ImU32 borderColor = hovered ? redesign::Theme::Accent() : dmFrameBorder;
-                    draw->AddRect(buttonMin, buttonMax, borderColor, 12.0f, 0, hovered ? 1.8f : 1.0f);
+                    // Zenin button: flat charcoal slab, red wash+edge when hot.
+                    draw->AddRectFilled(buttonMin, buttonMax,
+                                        hovered ? IM_COL32(46, 46, 52, 255) : IM_COL32(30, 30, 34, 255),
+                                        12.0f);
+                    if (hovered) {
+                        draw->AddRectFilled(buttonMin, buttonMax, zenin::T::AccentSoft, 12.0f);
+                        draw->AddRect(buttonMin, buttonMax, zenin::T::Accent, 12.0f, 0, 1.6f);
+                    }
 
                     const float labelSizeUse = labelSize > 0.0f ? labelSize : 16.0f;
                     const ImVec2 labelTextSize = (labelFont != nullptr)
@@ -1864,7 +1899,7 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                         : ImGui::CalcTextSize(label);
                     const ImVec2 labelTextPos = ImVec2((buttonMin.x + buttonMax.x - labelTextSize.x) * 0.5f,
                         (buttonMin.y + buttonMax.y - labelTextSize.y) * 0.5f);
-                    const ImU32 labelColor = hovered ? IM_COL32(12, 12, 16, 255) : redesign::Theme::Text();
+                    const ImU32 labelColor = hovered ? IM_COL32(255, 255, 255, 255) : zenin::T::Text;
                     if (labelFont != nullptr) draw->AddText(labelFont, labelSizeUse, labelTextPos, labelColor, label);
                     else draw->AddText(labelTextPos, labelColor, label);
 
@@ -1872,8 +1907,8 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                 };
 
                 {
-                    const char* helperLine1 = "Authorize through your license key where";
-                    const char* helperLine2 = "your subscription is located.";
+                    const char* helperLine1 = "Enter your license key below. If the key";
+                    const char* helperLine2 = "is not valid you will not be logged in.";
                     const float helperX = pos.x + (login_size.x - ImGui::CalcTextSize(helperLine1).x) * 0.5f;
                     draw->AddText(ImVec2(helperX, pos.y + 176.0f), redesign::Theme::TextMut(), helperLine1);
                     const float helper2X = pos.x + (login_size.x - ImGui::CalcTextSize(helperLine2).x) * 0.5f;
@@ -1996,7 +2031,7 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                 // ---------- HUB LAUNCHER (exclusive) ----------
                 static bool loggedWheelFirstFrame = false;
                 if (!loggedWheelFirstFrame) { loggedWheelFirstFrame = true; LOGI("ui: hub first frame"); }
-                const int picked = redesign::RenderHub(viewportCenter);
+                int picked = zenin::RenderZeninHub(viewportCenter);
                 if (picked >= 1 && picked <= 6) {
                     page = picked;
                     activeTab = picked;
@@ -2047,13 +2082,24 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                         c::ApplyMainWindowStyle(*runtimeStyle);
                         c::UpdateTheme(runtimeState.dark, menu, ImGui::GetIO().DeltaTime);
                         main_runtime_theme::ApplyThemeState();
+                        main_runtime_theme::applyZeninStandardStyle();
 
                         const ImVec2 runtimeWindowSize = ImGui::GetWindowSize();
                         const ImVec2 runtimeWindowPos = ImGui::GetWindowPos();
                         menuWindowPos = runtimeWindowPos;
                         ImDrawList *runtimeDrawList = ImGui::GetWindowDrawList();
 
-                        redesign::DrawCard(runtimeDrawList, runtimeWindowPos, ImVec2(runtimeWindowPos.x + runtimeWindowSize.x, runtimeWindowPos.y + runtimeWindowSize.y), 16.0f);
+                        // Zenin window skin: dark charcoal card, thin grey
+                        // border, red accent top edge (matches the reference UI).
+                        runtimeDrawList->AddRectFilled(runtimeWindowPos,
+                            ImVec2(runtimeWindowPos.x + runtimeWindowSize.x, runtimeWindowPos.y + runtimeWindowSize.y),
+                            zenin::T::WindowBg, zenin::T::RWindow);
+                        runtimeDrawList->AddRect(runtimeWindowPos,
+                            ImVec2(runtimeWindowPos.x + runtimeWindowSize.x, runtimeWindowPos.y + runtimeWindowSize.y),
+                            IM_COL32(38, 38, 42, 230), zenin::T::RWindow, 0, 1.3f);
+                        runtimeDrawList->AddRectFilled(runtimeWindowPos,
+                            ImVec2(runtimeWindowPos.x + runtimeWindowSize.x, runtimeWindowPos.y + 3.0f),
+                            zenin::T::Accent, zenin::T::RWindow, ImDrawFlags_RoundCornersTop);
                         runtimeDrawList->AddRectFilledMultiColor(runtimeWindowPos, ImVec2(runtimeWindowPos.x + runtimeWindowSize.x, runtimeWindowPos.y + 120.0f), IM_COL32(26, 26, 34, 200), IM_COL32(26, 26, 34, 0), IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0));
 
                         const float outerPad = 14.0f;
@@ -2082,8 +2128,13 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                         runtimeState.page = ImClamp(runtimeState.page, 1, 6);
                         runtimeState.activeTab = ImClamp(runtimeState.activeTab, 1, 6);
 
-                        runtimeDrawList->AddRectFilled(headerMin, headerMax, IM_COL32(20, 20, 26, 235), 12.0f);
-                        runtimeDrawList->AddRect(headerMin, headerMax, IM_COL32(44, 44, 56, 190), 12.0f, 0, 1.0f);
+                        runtimeDrawList->AddRectFilled(headerMin, headerMax, IM_COL32(22, 22, 25, 245), 12.0f);
+                        runtimeDrawList->AddRect(headerMin, headerMax, IM_COL32(42, 42, 48, 200), 12.0f, 0, 1.0f);
+                        // thin accent divider along the header bottom, zenin red
+                        runtimeDrawList->AddRectFilled(
+                            ImVec2(headerMin.x + 14.0f, headerMax.y - 3.0f),
+                            ImVec2(headerMax.x - 14.0f, headerMax.y - 1.5f),
+                            zenin::T::Accent, 1.5f);
 
                         const ImVec2 flameCenter(headerMin.x + 28.0f, headerMin.y + headerHeight * 0.5f);
                         runtimeDrawList->AddCircleFilled(flameCenter, 18.0f, IM_COL32(24, 24, 24, 255), 28);
@@ -2096,8 +2147,8 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
 
                         ImFont *runtimeTitleFont = custom::shell::GetTitleFont();
                         const float runtimeTitleSize = 22.0f;
-                        const char *titleA = "ETHNIR NOIR CONTAINER";
-                        const char *titleB = " V3";
+                        const char *titleA = "ethnir noir";
+                        const char *titleB = " | container v3";
                         const ImVec2 titleASize = runtimeTitleFont->CalcTextSizeA(runtimeTitleSize, FLT_MAX, 0.0f, titleA);
                         runtimeDrawList->AddText(runtimeTitleFont, runtimeTitleSize, ImVec2(headerMin.x + 56.0f, headerMin.y + 11.0f), IM_COL32(235, 235, 235, 255), titleA);
                         runtimeDrawList->AddText(runtimeTitleFont, runtimeTitleSize, ImVec2(headerMin.x + 56.0f + titleASize.x, headerMin.y + 11.0f), main_runtime_theme::GetAccentU32(), titleB);
@@ -2175,8 +2226,8 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                         runtimeState.tabAlpha = ImClamp(runtimeState.tabAlpha + (4.0f * ImGui::GetIO().DeltaTime * (runtimeState.page == runtimeState.activeTab ? 1.0f : -1.0f)), 0.0f, 1.0f);
                         if (runtimeState.tabAlpha == 0.0f && runtimeState.tabAdd == 0.0f) runtimeState.activeTab = runtimeState.page;
 
-                        runtimeDrawList->AddRectFilled(hostMin, hostMax, IM_COL32(12, 12, 15, 248), 12.0f);
-                        runtimeDrawList->AddRect(hostMin, hostMax, IM_COL32(38, 38, 48, 170), 12.0f, 0, 1.0f);
+                        runtimeDrawList->AddRectFilled(hostMin, hostMax, IM_COL32(24, 24, 27, 245), 12.0f);
+                        runtimeDrawList->AddRect(hostMin, hostMax, IM_COL32(40, 40, 46, 190), 12.0f, 0, 1.0f);
 
                         ImGui::SetCursorScreenPos(contentInnerMin);
                         ImGui::BeginChild("##RuntimeContentHost", contentInnerSize, false, ImGuiWindowFlags_NoBackground);
