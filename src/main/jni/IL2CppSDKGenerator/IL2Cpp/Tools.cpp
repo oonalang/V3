@@ -11,6 +11,11 @@
 #include <openssl/err.h>
 #include <openssl/md5.h>
 #include <string>
+#include <vector>
+#include <utility>
+#include <cstdio>
+#include <cstdint>
+#include <ctime>
 #include "Tools.h"
 
 #if defined(__arm__)
@@ -92,13 +97,70 @@ bool Tools::PVM_WriteAddr(void *addr, void *buffer, size_t length) {
 
 static uint8_t tools_isvalid_buf[4] = {0,0,0,0};
 
+// ---------------------------------------------------------------------------
+// Readable-memory probe for Tools::IsPtrValid.
+//
+// process_vm_readv is the cheap fast path, but some Android builds block the
+// raw syscall for untrusted_app SELinux domains. When that happens pvm()
+// returns false for EVERY address, which made every guard that used
+// IsPtrValid() reject valid objects — including the skin ctor-hook installer,
+// so all 19 skin hooks were skipped and the skins lists stayed empty.
+//
+// Fallback: a cached /proc/self/maps range check. The map list is refreshed at
+// most every 250 ms; per-call cost is a binary search over the cached ranges,
+// so the per-frame ESP/aim callers stay cheap.
+// ---------------------------------------------------------------------------
+static std::vector<std::pair<uintptr_t, uintptr_t>> g_readableRanges;
+static uint64_t g_readableCacheMs = 0;
+
+static uint64_t ToolsNowMs() {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000ull + (uint64_t)ts.tv_nsec / 1000000ull;
+}
+
+static void ToolsRefreshReadableRanges() {
+    g_readableRanges.clear();
+    FILE *f = fopen("/proc/self/maps", "r");
+    if (!f) return;
+    char line[512];
+    while (fgets(line, sizeof line, f)) {
+        uintptr_t lo = 0, hi = 0;
+        char perms[8] = {0};
+        if (sscanf(line, "%" SCNxPTR "-%" SCNxPTR " %7s", &lo, &hi, perms) == 3 &&
+            perms[0] == 'r' && hi > lo) {
+            g_readableRanges.emplace_back(lo, hi);
+        }
+    }
+    fclose(f);
+}
+
+static bool ToolsAddrReadable(void *addr) {
+    const uintptr_t a = (uintptr_t)addr;
+    uint64_t now = ToolsNowMs();
+    if (g_readableRanges.empty() || now < g_readableCacheMs || now - g_readableCacheMs > 250) {
+        ToolsRefreshReadableRanges();
+        g_readableCacheMs = now;
+    }
+    // binary search for a range containing 'a'
+    size_t lo = 0, hi = g_readableRanges.size();
+    while (lo < hi) {
+        size_t mid = (lo + hi) / 2;
+        if (a < g_readableRanges[mid].first)      hi = mid;
+        else if (a >= g_readableRanges[mid].second) lo = mid + 1;
+        else return true;
+    }
+    return false;
+}
+
 bool Tools::IsPtrValid(void *addr) {
     // A valid pointer is non-null and points into readable mapped memory.
-    // Use process_vm_readv (via pvm) to probe the page instead of writing
-    // arbitrary pointer bytes into /dev/random (which corrupted the entropy pool
-    // and never actually validated anything).
     if (addr == nullptr) return false;
-    return pvm(addr, tools_isvalid_buf, sizeof tools_isvalid_buf);
+    if (pvm(addr, tools_isvalid_buf, sizeof tools_isvalid_buf)) return true;
+    // pvm failed: either the page really is unreadable, or this device blocks
+    // process_vm_readv entirely. Confirm through /proc/self/maps instead of
+    // blindly rejecting (a blind reject silently disabled every guarded hook).
+    return ToolsAddrReadable(addr);
 }
 
 uintptr_t Tools::GetBaseAddress(const char *name) {
