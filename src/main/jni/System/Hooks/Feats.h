@@ -230,10 +230,88 @@ inline void (*orig_Weapon_Tick)(void *instance, float deltaTime) = nullptr;
 inline void (*orig_Weapon_StartFire)(void *instance) = nullptr;
 inline void (*orig_Weapon_StopFire)(void *instance, bool isImmidiately) = nullptr;
 
-inline uintptr_t A_FireFindTarget() {
-    if (Camera::get_main() == nullptr)
+// True triggerbot: an enemy counts as "on the crosshair" only when its head or
+// body projects onto the actual screen center (the aim point), within a small
+// crosshair margin and in front of the camera. This is deliberately stricter
+// than the FOV-proximity test used by aimbot targeting: A-Fire is not auto aim,
+// it must never fire just because an enemy is somewhere near the crosshair.
+inline float A_FireCrosshairRadiusPx()
+{
+    // Tight crosshair zone: 2.5% of the smaller screen dimension (about 24px on
+    // a 1080p-wide phone), independent of the aimbot FOV slider.
+    const float w = (float)get_width();
+    return w * 0.025f;
+}
+
+inline uintptr_t A_FireFindTarget()
+{
+    Camera *cam = Camera::get_main();
+    if (cam == nullptr)
         return 0;
-    return (Config.Aim.By == EAim::Distance) ? GetClosestTarget() : GetInsideFOVTarget();
+
+    auto get_MatchGame_f = (uintptr_t (*)()) (Class_Gameplay_get_MatchGame);
+    uintptr_t matchGame = get_MatchGame_f();
+    if (!Tools::IsPtrValid((void *) matchGame))
+        return 0;
+
+    auto get_LocalPawn_f = (uintptr_t (*)()) (Class_Gameplay_get_LocalPawn);
+    uintptr_t localU = get_LocalPawn_f();
+    if (!localU)
+        return 0;
+
+    const float cx = (float)get_width()  * 0.5f;
+    const float cy = (float)get_height() * 0.5f;
+    const float radius = A_FireCrosshairRadiusPx();
+    const float radiusSq = radius * radius;
+
+    uintptr_t best = 0;
+    float bestDist = radiusSq;
+
+    auto EnemyPawns = *(List<uintptr_t> **) (matchGame + Class_BaseGame_EnemyPawns);
+    if (!EnemyPawns || !Tools::IsPtrValid((void *) EnemyPawns))
+        return 0;
+    auto Items = EnemyPawns->getItems();
+    if (!Items)
+        return 0;
+
+    for (int i = 0; i < EnemyPawns->getSize(); i++) {
+        uintptr_t pawnU = Items[i];
+        if (!pawnU || !Tools::IsPtrValid((void *) pawnU))
+            continue;
+        if (!*(bool *) (pawnU + Class_Pawn_m_IsAlive))
+            continue;
+
+        // Test head first, then body root: whichever the crosshair covers.
+        Vector3 headPos{0,0,0}, bodyPos{0,0,0};
+        auto m_HeadBone = *(Transform **) (pawnU + Class_Pawn_m_HeadBone);
+        if (m_HeadBone && Tools::IsPtrValid((void *) m_HeadBone))
+            headPos = m_HeadBone->get_position();
+        auto m_Mesh = *(Transform **) (pawnU + Class_Pawn_m_Mesh);
+        if (m_Mesh && Tools::IsPtrValid((void *) m_Mesh))
+            bodyPos = m_Mesh->get_position();
+
+        bool covered = false;
+
+        if (m_HeadBone && Tools::IsPtrValid((void *) m_HeadBone)) {
+            Vector3 headSc = cam->WorldToScreenPoint(headPos);
+            if (headSc.z > 0.0f) { // in front of camera
+                const float dx = headSc.x - cx;
+                const float dy = headSc.y - cy;
+                const float d2 = dx * dx + dy * dy;
+                if (d2 <= bestDist) { best = pawnU; bestDist = d2; covered = true; }
+            }
+        }
+        if (!covered && m_Mesh && Tools::IsPtrValid((void *) m_Mesh)) {
+            Vector3 bodySc = cam->WorldToScreenPoint(bodyPos);
+            if (bodySc.z > 0.0f) {
+                const float dx = bodySc.x - cx;
+                const float dy = bodySc.y - cy;
+                const float d2 = dx * dx + dy * dy;
+                if (d2 <= bestDist) { best = pawnU; bestDist = d2; }
+            }
+        }
+    }
+    return best;
 }
 
 // Release the trigger we pressed (used when the toggle is switched back off).
@@ -301,6 +379,35 @@ inline void hook_Weapon_Tick(void *instance, float deltaTime) {
     }
 }
 
+// Cross-check the hit target against the live enemy list before treating it as
+// a Pawn. A bare IsPtrValid() only proves the address is mapped memory: world
+// geometry, prefabs and freed pawns all pass it, and calling get_LastPawnPos /
+// get_HeadPosition on one of those dereferences garbage and takes the game down
+// (the crash when enabling the hitbox and firing beside an enemy).
+inline bool A_HitboxTargetIsEnemyPawn(void* hitTarget) {
+    if (hitTarget == nullptr || !Tools::IsPtrValid(hitTarget))
+        return false;
+
+    auto get_MatchGame_f = (uintptr_t (*)()) (Class_Gameplay_get_MatchGame);
+    uintptr_t matchGame = get_MatchGame_f();
+    if (!Tools::IsPtrValid((void *) matchGame))
+        return false;
+
+    auto EnemyPawns = *(List<uintptr_t> **) (matchGame + Class_BaseGame_EnemyPawns);
+    if (!EnemyPawns || !Tools::IsPtrValid((void *) EnemyPawns))
+        return false;
+    auto Items = EnemyPawns->getItems();
+    if (!Items)
+        return false;
+
+    const uintptr_t target = (uintptr_t)hitTarget;
+    for (int i = 0; i < EnemyPawns->getSize(); i++) {
+        if (Items[i] == target)
+            return true;
+    }
+    return false;
+}
+
 inline bool SingleLineCheckPhysics(void* instance, int hitType, void* hitTarget, void* hitCollider, Vector3 startPos, Vector3 dir, void* impactInfo) {
     if (instance != NULL && Config.ExtraMenu.Hit) {
         const float dirLenSq = dir.x * dir.x + dir.y * dir.y + dir.z * dir.z;
@@ -309,7 +416,7 @@ inline bool SingleLineCheckPhysics(void* instance, int hitType, void* hitTarget,
         }
 
         Pawn* targetPawn = (Pawn*)hitTarget;
-        if (Tools::IsPtrValid(targetPawn)) {
+        if (A_HitboxTargetIsEnemyPawn(hitTarget)) {
             const float hitboxScale = Config.ExtraMenu.HitboxScale;
             // Real positions reported by the pawn itself -- not a guessed offset.
             const Vector3 bodyCenter = targetPawn->get_LastPawnPos();

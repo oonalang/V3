@@ -545,7 +545,7 @@ void LoadCharacterSkins() {
         if (!z || !Tools::IsPtrValid(z))
             continue;
 
-        auto *y = (BRDeadboxSkinFields *)((uintptr_t)z + 0x10);
+        auto *y = (BRDeadboxSkinFields *)((uintptr_t)z + 0x18);
 
         if (!Tools::IsPtrValid(y))
             continue;
@@ -990,7 +990,7 @@ void LoadWeaponSkins() {
 
     for (void* extra : weaponExtras) {
         if (!extra || !Tools::IsPtrValid(extra)) continue;
-        weaponextraFields = (WeaponConfExtraFields*)((uintptr_t)extra + 0x10);
+        weaponextraFields = (WeaponConfExtraFields*)((uintptr_t)extra + 0x18);
         if (!Tools::IsPtrValid(weaponextraFields)) continue;
         weaponExtraByID[weaponextraFields->ID] = extra;
     }
@@ -1006,7 +1006,7 @@ void LoadWeaponSkins() {
 
     for (void* sight : mythicSights) {
         if (!sight || !Tools::IsPtrValid(sight)) continue;
-        mythicsightFields = (MythicSightFields*)((uintptr_t)sight + 0x10);
+        mythicsightFields = (MythicSightFields*)((uintptr_t)sight + 0x18);
         if (!Tools::IsPtrValid(mythicsightFields)) continue;
         auto* equipArray = *(Array<int>**)((uintptr_t)sight + 0x38);
         if (equipArray && Tools::IsPtrValid(equipArray) && equipArray->getLength() > 0) {
@@ -1019,7 +1019,7 @@ void LoadWeaponSkins() {
 
     for (void* kill : killEffects) {
         if (!kill || !Tools::IsPtrValid(kill)) continue;
-        killeffectFields = (KillEffectItemFields*)((uintptr_t)kill + 0x10);
+        killeffectFields = (KillEffectItemFields*)((uintptr_t)kill + 0x18);
         if (!Tools::IsPtrValid(killeffectFields)) continue;
         auto* equipArray = *(Array<int>**)((uintptr_t)kill + 0x90);
         if (equipArray && Tools::IsPtrValid(equipArray) && equipArray->getLength() > 0) {
@@ -1036,7 +1036,7 @@ void LoadWeaponSkins() {
 
     for (void* res : itemRes) {
         if (!res || !Tools::IsPtrValid(res)) continue;
-        itemFields = (ItemResourceFields*)((uintptr_t)res + 0x10);
+        itemFields = (ItemResourceFields*)((uintptr_t)res + 0x18);
         if (!Tools::IsPtrValid(itemFields)) continue;
         itemResByID[itemFields->ID] = res;
     }
@@ -1131,7 +1131,7 @@ void LoadWeaponSkins() {
                 auto itExtraBase = weaponExtraByID.find(baseID);
                 if (itExtraBase != weaponExtraByID.end()) {
                     void* extra = itExtraBase->second;
-                    weaponextraFields = (WeaponConfExtraFields*)((uintptr_t)extra + 0x10);
+                    weaponextraFields = (WeaponConfExtraFields*)((uintptr_t)extra + 0x18);
                     if (Tools::IsPtrValid(weaponextraFields)) {
                         extraOrig = weaponextraFields->ID;
                     }
@@ -1139,7 +1139,7 @@ void LoadWeaponSkins() {
                 auto itExtraConf = weaponExtraByID.find(confID);
                 if (itExtraConf != weaponExtraByID.end()) {
                     void* extra = itExtraConf->second;
-                    weaponextraFields = (WeaponConfExtraFields*)((uintptr_t)extra + 0x10);
+                    weaponextraFields = (WeaponConfExtraFields*)((uintptr_t)extra + 0x18);
                     if (Tools::IsPtrValid(weaponextraFields)) {
                         deadReplay = weaponextraFields->DefaultDeadReplayEffectId;
                         killEffect = weaponextraFields->DefaultKillEffectId;
@@ -1193,7 +1193,7 @@ void LoadWeaponSkins() {
                 auto itItemRes = itemResByID.find(confID);
                 if (itItemRes != itemResByID.end()) {
                     void* itemResource = itItemRes->second;
-                    itemFields = (ItemResourceFields*)((uintptr_t)itemResource + 0x10);
+                    itemFields = (ItemResourceFields*)((uintptr_t)itemResource + 0x18);
                     if (Tools::IsPtrValid(itemFields)) {
                         xItem1 = itemFields->FxAssetID;
                         xItem2 = itemFields->InventoryModelID;
@@ -1234,7 +1234,7 @@ void LoadPlaneSkins() {
 
     for (void* plane : dropPlaneSkins) {
         if (!plane || !Tools::IsPtrValid(plane)) continue;
-        dropplaneFields = (BRDropPlaneSkinFields*)((uintptr_t)plane + 0x10);
+        dropplaneFields = (BRDropPlaneSkinFields*)((uintptr_t)plane + 0x18);
         if (!Tools::IsPtrValid(dropplaneFields)) continue;
         std::string planeName = GetNameString(GetDropPlaneName, plane);
         if (dropplaneFields->ModelAsset1P != 0 && !getplane[planeName]) {
@@ -1273,7 +1273,7 @@ inline void* FindVehicleSkinConfigById(int skinId) {
         return exact->second;
     for (void* skin : SkinSnapshot(vehicleSkinConfigInstance)) {
         if (!SkinPtr(skin)) continue;
-        auto* fields = (VehicleSkinConfFields*)((uintptr_t)skin + 0x10);
+        auto* fields = (VehicleSkinConfFields*)((uintptr_t)skin + 0x18);
         if (SkinPtr(fields) && (int)fields->ID == skinId)
             return skin;
     }
@@ -1287,7 +1287,7 @@ inline int ActiveVehicleSkinIdForType(int vehicleType) {
 
 inline int ActiveVehicleSkinIdForConf(void* skinConf) {
     if (!SkinPtr(skinConf)) return 0;
-    auto* fields = (VehicleSkinConfFields*)((uintptr_t)skinConf + 0x10);
+    auto* fields = (VehicleSkinConfFields*)((uintptr_t)skinConf + 0x18);
     if (!SkinPtr(fields)) return 0;
     auto byId = activeVehicleSkinsById.find((int)fields->VehicleId);
     if (byId != activeVehicleSkinsById.end()) return byId->second;
@@ -1314,7 +1314,7 @@ inline int ActiveSkisSkinId() {
 inline void ForceSkisSkinFields(void* instance, int selected) {
     if (!SkinPtr(instance) || selected <= 0) return;
     void* conf = FindVehicleSkinConfigById(selected);
-    auto* fields = SkinPtr(conf) ? (VehicleSkinConfFields*)((uintptr_t)conf + 0x10) : nullptr;
+    auto* fields = SkinPtr(conf) ? (VehicleSkinConfFields*)((uintptr_t)conf + 0x18) : nullptr;
     const int mesh = SkinPtr(fields) ? fields->NewVehicleResId : 0;
     *(uint*)((uintptr_t)instance + 0x88) = (uint)selected;
     if (mesh > 0) {
@@ -1418,7 +1418,7 @@ void LoadSnowboardSkins() {
 
     for (void* skin : skinConfs) {
         if (!skin || !Tools::IsPtrValid(skin)) continue;
-        auto* fields = (VehicleSkinConfFields*)((uintptr_t)skin + 0x10);
+        auto* fields = (VehicleSkinConfFields*)((uintptr_t)skin + 0x18);
         if (!Tools::IsPtrValid(fields)) continue;
         if (fields->VehicleId != 31707110) continue;
         int skinId = (int)fields->ID;
