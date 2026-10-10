@@ -8,9 +8,9 @@
 // reused unchanged; only the shell around them is new.
 // ============================================================================
 
-#include "imgui.h"
-#include "imgui_internal.h"
-#include "../../Includes/Logger.h"
+#include "ImGui/imgui.h"
+#include "ImGui/imgui_internal.h"
+#include "Includes/Logger.h"
 
 namespace redesign {
 
