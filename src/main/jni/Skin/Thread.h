@@ -1449,7 +1449,8 @@ void LoadSnowboardSkins() {
 // DobbyHook() on an address that does not match the current game build jumps the
 // game straight into our hook, which takes the whole process down. Probe first
 // and skip (with a log) when the target offset is not mapped yet.
-inline bool Skins_HookAt(uintptr_t offset, void *replace, void **backup)
+template <typename HookFn, typename OrigFn>
+inline bool Skins_HookAt(uintptr_t offset, HookFn replace, OrigFn *backup)
 {
     uintptr_t addr = getRealOffset(offset);
     if (!Tools::IsPtrValid((void *)addr))
@@ -1457,7 +1458,7 @@ inline bool Skins_HookAt(uintptr_t offset, void *replace, void **backup)
         SKINERR("hook skipped, bad address: 0x%lx", (unsigned long)offset);
         return false;
     }
-    DobbyHook((void *)addr, replace, backup);
+    DobbyHook((void *)addr, (void *)replace, (void **)backup);
     return true;
 }
 
@@ -1497,12 +1498,21 @@ void Skins_Thread()
         // Small head start so the game finishes its early config pass first.
         std::this_thread::sleep_for(std::chrono::seconds(5));
         SKINLOG("skin loader: starting first pass");
+        // Log every stage of the first pass only: if the loader thread dies, the
+        // last "loader:" line in logcat names the step that killed it.
+        bool firstPass = true;
         while (true)
         {
+            if (firstPass) SKINLOG("loader: characters");
             LoadCharacterSkins();
+            if (firstPass) SKINLOG("loader: weapons");
             LoadWeaponSkins();
+            if (firstPass) SKINLOG("loader: planes");
             LoadPlaneSkins();
+            if (firstPass) SKINLOG("loader: snowboards");
             LoadSnowboardSkins();
+            if (firstPass) SKINLOG("loader: first pass complete");
+            firstPass = false;
             std::this_thread::sleep_for(std::chrono::milliseconds(1500));
         }
     }).detach();
