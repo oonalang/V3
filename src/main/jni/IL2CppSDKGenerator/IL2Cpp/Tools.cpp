@@ -10,6 +10,7 @@
 #include <openssl/rsa.h>
 #include <openssl/err.h>
 #include <openssl/md5.h>
+#include <atomic>
 #include <string>
 #include <vector>
 #include <utility>
@@ -100,67 +101,170 @@ static uint8_t tools_isvalid_buf[4] = {0,0,0,0};
 // ---------------------------------------------------------------------------
 // Readable-memory probe for Tools::IsPtrValid.
 //
-// process_vm_readv is the cheap fast path, but some Android builds block the
-// raw syscall for untrusted_app SELinux domains. When that happens pvm()
-// returns false for EVERY address, which made every guard that used
-// IsPtrValid() reject valid objects — including the skin ctor-hook installer,
+// process_vm_readv is the cheap and precise fast path, but some Android builds
+// block that raw syscall for untrusted_app SELinux domains. When that happens
+// pvm() returns false for EVERY address, which made every guard that used
+// IsPtrValid() reject valid objects -- including the skin ctor-hook installer,
 // so all 19 skin hooks were skipped and the skins lists stayed empty.
 //
-// Fallback: a cached /proc/self/maps range check. The map list is refreshed at
-// most every 250 ms; per-call cost is a binary search over the cached ranges,
-// so the per-frame ESP/aim callers stay cheap.
+// Fallback: a /proc/self/maps range check over a fixed-size POD double buffer.
+// The parser fills the inactive half and publishes it with an atomic index, so
+// readers never allocate, never take a lock and never observe a half-written
+// table. This guard is called from the render thread (menu/ESP), the game
+// thread (triggerbot / hitbox hooks) and the skin thread at the same time: the
+// previous std::vector version cleared and reallocated the table under those
+// readers, which is a use-after-free -- a crash, not a slow path.
 // ---------------------------------------------------------------------------
-static std::vector<std::pair<uintptr_t, uintptr_t>> g_readableRanges;
-static uint64_t g_readableCacheMs = 0;
+static const int TOOLS_MAX_RANGES = 4096;   // /proc/self/maps is a few hundred lines
+
+struct ToolsRangeBits { uintptr_t lo; uintptr_t hi; bool exec; };
+
+static ToolsRangeBits       g_toolsRanges[2][TOOLS_MAX_RANGES];
+static std::atomic<int>     g_toolsRangeCount[2];
+static std::atomic<int>     g_toolsActiveRangeSet{0};
+static std::atomic<uint64_t> g_toolsRangesStampMs{0};
+static std::atomic<int>     g_toolsParseLock{0};
+static std::atomic<int>     g_toolsPvmBlocked{-1};   // -1 unknown, 1 blocked, 0 working
 
 static uint64_t ToolsNowMs() {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
-    return (uint64_t)ts.tv_sec * 1000ull + (uint64_t)ts.tv_nsec / 1000000ull;
+    return (uint64_t) ts.tv_sec * 1000ull + (uint64_t) ts.tv_nsec / 1000000ull;
 }
 
-static void ToolsRefreshReadableRanges() {
-    g_readableRanges.clear();
+static void ToolsLogOnce(const char *msg, bool blocked) {
+    static std::atomic<int> logged{0};
+    int expected = 0;
+    if (logged.compare_exchange_strong(expected, 1, std::memory_order_acq_rel))
+        __android_log_print(ANDROID_LOG_WARN, "MWD-ASTRAL", "%s (%s)", msg,
+                            blocked ? "using /proc/self/maps fallback" : "process_vm_readv is fine");
+}
+
+// Does process_vm_readv work at all on this device? Probing our own code page
+// answers the question without depending on any game object.
+static bool ToolsPvmWorks() {
+    int probe = 0;
+    return pvm((void *) &ToolsPvmWorks, &probe, sizeof probe);
+}
+
+// Fill 'slot' from /proc/self/maps, return the number of readable ranges found.
+static int ToolsBuildRangeTable(int slot) {
+    int n = 0;
     FILE *f = fopen("/proc/self/maps", "r");
-    if (!f) return;
+    if (!f) return 0;
     char line[512];
-    while (fgets(line, sizeof line, f)) {
+    while (n < TOOLS_MAX_RANGES && fgets(line, sizeof line, f)) {
         uintptr_t lo = 0, hi = 0;
         char perms[8] = {0};
         if (sscanf(line, "%" SCNxPTR "-%" SCNxPTR " %7s", &lo, &hi, perms) == 3 &&
             perms[0] == 'r' && hi > lo) {
-            g_readableRanges.emplace_back(lo, hi);
+            g_toolsRanges[slot][n].lo = lo;
+            g_toolsRanges[slot][n].hi = hi;
+            // perms is "rwxp": index 2 is the execute bit. Only executable pages
+            // may be handed to an inline hook.
+            g_toolsRanges[slot][n].exec = (perms[2] == 'x');
+            ++n;
         }
     }
     fclose(f);
+    return n;
 }
 
-static bool ToolsAddrReadable(void *addr) {
-    const uintptr_t a = (uintptr_t)addr;
-    uint64_t now = ToolsNowMs();
-    if (g_readableRanges.empty() || now < g_readableCacheMs || now - g_readableCacheMs > 250) {
-        ToolsRefreshReadableRanges();
-        g_readableCacheMs = now;
+static void ToolsRefreshRanges() {
+    // One parser at a time; everybody else keeps using the published snapshot.
+    int expected = 0;
+    if (!g_toolsParseLock.compare_exchange_strong(expected, 1, std::memory_order_acq_rel))
+        return;
+
+    const int slot = 1 - g_toolsActiveRangeSet.load(std::memory_order_relaxed);
+    const int n = ToolsBuildRangeTable(slot);
+    if (n > 0) {
+        // Publish complete tables only: the count is written first, then the
+        // index is released, so a reader can never see a truncated table.
+        g_toolsRangeCount[slot].store(n, std::memory_order_relaxed);
+        g_toolsActiveRangeSet.store(slot, std::memory_order_release);
     }
-    // binary search for a range containing 'a'
-    size_t lo = 0, hi = g_readableRanges.size();
+    g_toolsRangesStampMs.store(ToolsNowMs(), std::memory_order_relaxed);
+    g_toolsParseLock.store(0, std::memory_order_release);
+}
+
+// True when [addr, addr+len) lies completely inside one readable mapping.
+// When requireExec is set the mapping must also be executable: that is the test
+// a hook target has to pass before we patch it.
+static bool ToolsAddrReadable(void *addr, size_t len, bool requireExec = false) {
+    const uintptr_t a = (uintptr_t) addr;
+    if (a == 0 || a + len < a)
+        return false;
+
+    const uint64_t now = ToolsNowMs();
+    const uint64_t stamp = g_toolsRangesStampMs.load(std::memory_order_relaxed);
+    const int active = g_toolsActiveRangeSet.load(std::memory_order_acquire);
+    if (g_toolsRangeCount[active].load(std::memory_order_relaxed) <= 0 ||
+        now < stamp || now - stamp > 250) {
+        ToolsRefreshRanges();
+    }
+
+    const int slot = g_toolsActiveRangeSet.load(std::memory_order_acquire);
+    const int count = g_toolsRangeCount[slot].load(std::memory_order_relaxed);
+    if (count <= 0)
+        return false;
+
+    // Ranges come out of /proc/self/maps already sorted by start address.
+    int lo = 0, hi = count;
     while (lo < hi) {
-        size_t mid = (lo + hi) / 2;
-        if (a < g_readableRanges[mid].first)      hi = mid;
-        else if (a >= g_readableRanges[mid].second) lo = mid + 1;
-        else return true;
+        const int mid = lo + (hi - lo) / 2;
+        if (a < g_toolsRanges[slot][mid].lo)          hi = mid;
+        else if (a >= g_toolsRanges[slot][mid].hi)    lo = mid + 1;
+        else return (a + len <= g_toolsRanges[slot][mid].hi) &&
+                     (!requireExec || g_toolsRanges[slot][mid].exec);
     }
     return false;
+}
+
+// Report how pointer validation is working on this device (used by the boot log).
+void Tools::Diag(char *buffer, size_t size) {
+    const int blocked = g_toolsPvmBlocked.load(std::memory_order_relaxed);
+    const int slot = g_toolsActiveRangeSet.load(std::memory_order_acquire);
+    snprintf(buffer, size, "pvm=%s maps_ranges=%d maps_age_ms=%llu",
+             blocked == 1 ? "blocked" : (blocked == 0 ? "ok" : "unknown"),
+             g_toolsRangeCount[slot].load(std::memory_order_relaxed),
+             (unsigned long long)(ToolsNowMs() - g_toolsRangesStampMs.load(std::memory_order_relaxed)));
+}
+
+// Executable-memory probe used before installing any inline hook. A stale
+// offset (game updated, dump from another build) points into data or the middle
+// of an unrelated function; patching that takes the whole process down later,
+// usually during the next load. Refusing it here turns "random crash" into a
+// single log line naming the address.
+bool Tools::IsExecPtr(void *addr) {
+    if (addr == nullptr) return false;
+    // process_vm_readv can prove a page is readable, but the execute bit only
+    // exists in the maps snapshot, so both questions are answered there.
+    return ToolsAddrReadable(addr, sizeof(void *), true);
 }
 
 bool Tools::IsPtrValid(void *addr) {
     // A valid pointer is non-null and points into readable mapped memory.
     if (addr == nullptr) return false;
     if (pvm(addr, tools_isvalid_buf, sizeof tools_isvalid_buf)) return true;
-    // pvm failed: either the page really is unreadable, or this device blocks
-    // process_vm_readv entirely. Confirm through /proc/self/maps instead of
-    // blindly rejecting (a blind reject silently disabled every guarded hook).
-    return ToolsAddrReadable(addr);
+
+    const int blocked = g_toolsPvmBlocked.load(std::memory_order_relaxed);
+    if (blocked == 0)
+        return false;                       // pvm works, so this address really is bad
+
+    if (blocked < 0) {
+        // First failure: work out whether the syscall is blocked for us at all.
+        const bool isBlocked = !ToolsPvmWorks();
+        g_toolsPvmBlocked.store(isBlocked ? 1 : 0, std::memory_order_relaxed);
+        ToolsLogOnce("IsPtrValid: process_vm_readv probe failed", isBlocked);
+        if (!isBlocked)
+            return false;
+    }
+
+    // pvm is unusable here: fall back to the live /proc/self/maps snapshot
+    // instead of blindly rejecting, which would silently disable every guarded
+    // hook (that is exactly what emptied the skins lists).
+    return ToolsAddrReadable(addr, sizeof(void *));
 }
 
 uintptr_t Tools::GetBaseAddress(const char *name) {

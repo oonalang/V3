@@ -3,6 +3,14 @@
 #include <cstdint>
 #include <string>
 #include <dlfcn.h>
+#include <android/log.h>
+
+// Breadcrumbs for the triggerbot. Every state change of the driver is logged
+// once with a stable tag, so a crash report can say *when* the game died
+// (arming in a match, holding fire, releasing) instead of leaving it to guesswork.
+inline void A_FireLog(const char *what) {
+    __android_log_print(ANDROID_LOG_INFO, "MWD-ASTRAL", "[afire] %s", what);
+}
 
 extern bool SnowB;
 extern float SnowBsize;
@@ -230,6 +238,9 @@ inline double   g_afireLastPressTime = -1000.0;
 //-- StartFire/StopFire itself.
 inline bool     g_afireReleaseRequested = false;
 inline double   g_afireLastEvalTime     = -1000.0;
+// True only while the game reports a live match + local pawn + held weapon.
+// The driver stays armed but idle until then (loading / lobby / spectating).
+inline bool     g_afireInMatch          = false;
 
 // Monotonic clock for the triggerbot. Deliberately NOT ImGui::GetTime(): the
 // driver runs on the game thread while the render thread owns the ImGui
@@ -383,16 +394,18 @@ inline void A_FireRequestRelease(void) {
 }
 
 // Triggerbot driver.
-inline void A_FireTick(void);
+
+inline void A_FireTick(void *tickedWeapon = nullptr);
 
 // Weapon::Tick is the primary heartbeat for the triggerbot: it runs on the game
 // thread, every frame, for the weapon the game is currently driving. It is used
 // purely as a heartbeat -- the target is always fired through the local pawn's
 // current weapon, so it does not matter which weapon instance ticked.
 inline void hook_Weapon_Tick(void *instance, float deltaTime) {
+    // Always tick the original, even if A_FireTick throttles us out.
     if (orig_Weapon_Tick != nullptr)
         orig_Weapon_Tick(instance, deltaTime);
-    A_FireTick();
+    A_FireTick(instance);
 }
 
 // =====================================================================
@@ -414,7 +427,7 @@ inline void hook_Weapon_Tick(void *instance, float deltaTime) {
 // Running the whole feature on the game thread (from the Weapon::Tick and
 // LocalPlayer tick hooks) removes both races, and makes the fire call land inside
 // the game's own update like a real trigger pull.
-inline void A_FireTick()
+inline void A_FireTick(void *tickedWeapon)
 {
     // Weapon::Tick runs for every weapon in the world, so this is entered many
     // times per frame. One evaluation per ~10ms keeps it at about one scan per
@@ -431,18 +444,55 @@ inline void A_FireTick()
         return;
     }
 
-    if (Class_Gameplay_get_LocalPawn == 0)
+    // Every input this driver needs has to exist in THIS build before it is
+    // allowed to touch the game. A single unresolved offset used to mean calling
+    // through a null or garbage pointer the moment the feature was switched on.
+    if (Class_Gameplay_get_MatchGame == 0 || Class_Gameplay_get_LocalPawn == 0) {
+        g_afireInMatch = false;
+        A_FireReleaseTrigger(nullptr);
         return;
+    }
+    if (orig_Weapon_StartFire == nullptr || orig_Weapon_StopFire == nullptr) {
+        A_FireReleaseTrigger(nullptr);
+        return;
+    }
+
+    // In-match gate. A live match object, a live local pawn and a valid held
+    // weapon is what separates "playing" from "loading / lobby / spectating".
+    // Until the game reports all of them the driver stays armed but idle, so it
+    // can never poke a half-built level.
+    const uintptr_t matchGame = ((uintptr_t (*)()) Class_Gameplay_get_MatchGame)();
+    if (!Tools::IsPtrValid((void *) matchGame)) {
+        g_afireInMatch = false;
+        A_FireReleaseTrigger(nullptr);
+        return;
+    }
 
     Pawn *local = GamePlay::get_LocalPawn();
     if (!Tools::IsPtrValid(local) || !local->m_IsAlive()) {
+        g_afireInMatch = false;
         A_FireReleaseTrigger(nullptr);
         return;
     }
 
     Weapon *held = local->get_CurrentWeapon();
     if (!Tools::IsPtrValid(held)) {
+        g_afireInMatch = false;
         A_FireReleaseTrigger(nullptr);
+        return;
+    }
+    if (!g_afireInMatch) {
+        g_afireInMatch = true;
+        A_FireLog("armed: live match, local pawn alive, weapon held");
+    }
+
+    // Only the LOCAL player's actively held weapon drives the trigger. Weapon::
+    // Tick runs for every bot/vehicle/prop weapon object on the map too; without
+    // this guard each of those ticks burned a full crosshair target scan (every
+    // 10 ms x the number of ticked weapons) and, worse, could hold the machine
+    // gun down from a foreign instance. Cheap pointer compare.
+    // NOTE: not a substitute for the match logic below; it is the fast-path gate.
+    if (tickedWeapon != nullptr && tickedWeapon != (void *) held) {
         return;
     }
 
@@ -465,13 +515,14 @@ inline void A_FireTick()
 
     if (ready) {
         if (!g_afireHoldingFire) {
-            if (orig_Weapon_StartFire != nullptr)
-                orig_Weapon_StartFire((void *) held);
+            A_FireLog("fire: target under the crosshair -> StartFire");
+            orig_Weapon_StartFire((void *) held);
             g_afireHoldingFire = true;
             g_afireFiringOn = (void *) held;
         }
         g_afireLastPressTime = now;
     } else if (g_afireHoldingFire) {
+        A_FireLog("release: target lost -> StopFire");
         A_FireReleaseTrigger(nullptr);
     }
 }
@@ -1076,12 +1127,14 @@ inline float h_GetSuperSlideRate(void* ins) {
 
 inline void (*o_TickLocalPlayer)(void*, float) = nullptr;
 inline void h_TickLocalPlayer(void* ins, float deltaTime) {
-    if (SlideRange <= 0.0f) {
+    if (SlideRange <= 0.0f && o_TickLocalPlayer != nullptr) {
         o_TickLocalPlayer(ins, deltaTime);
     }
     // Second game-thread heartbeat for the triggerbot, so A-Fire keeps working
-    // even if the weapon object is not being ticked this frame (holstered /
-    // switching). A_FireTick() throttles, so this adds no extra cost.
+    // even if the weapon object is not being ticked this frame. NOTE: this hook
+    // is currently commented out in InitializeAllHooks (it belongs to the
+    // disabled Long Slide set), so today Weapon::Tick is the only heartbeat --
+    // A_FireTick() throttles, so enabling this later adds no extra cost.
     A_FireTick();
 }
 
@@ -1675,8 +1728,24 @@ inline void InitializeAllHooks() {
 
     //-- A-Fire (triggerbot / auto-fire)
     // Weapon::Tick / StartFire / StopFire (RVAs from dump.cs).
-    orig_Weapon_StartFire = reinterpret_cast<void (*)(void *)>(getAbsoluteAddress("libunity.so", string2Offset("0x5123C84")));
-    orig_Weapon_StopFire = reinterpret_cast<void (*)(void *, bool)>(getAbsoluteAddress("libunity.so", string2Offset("0x5124EAC")));
+    //
+    // StartFire/StopFire are called directly (they are not hooked), so a stale
+    // RVA here is a jump into whatever lives at that address -- the classic
+    // "switch the triggerbot on and the game dies" failure. Only keep the two
+    // pointers when they really do point at executable code; A_FireTick() then
+    // refuses to fire when either one is null.
+    orig_Weapon_StartFire = nullptr;
+    orig_Weapon_StopFire = nullptr;
+    {
+        void *startFire = (void *) getAbsoluteAddress("libunity.so", string2Offset("0x5123C84"));
+        void *stopFire  = (void *) getAbsoluteAddress("libunity.so", string2Offset("0x5124EAC"));
+        if (Tools::IsExecPtr(startFire))
+            orig_Weapon_StartFire = reinterpret_cast<void (*)(void *)>(startFire);
+        if (Tools::IsExecPtr(stopFire))
+            orig_Weapon_StopFire = reinterpret_cast<void (*)(void *, bool)>(stopFire);
+        if (orig_Weapon_StartFire == nullptr || orig_Weapon_StopFire == nullptr)
+            A_FireLog("weapon fire RVAs do not match this build -- triggerbot disabled");
+    }
     HOOK_LIB("libunity.so", "0x5114C34", hook_Weapon_Tick, orig_Weapon_Tick);
 
     //-- Report spoof (CSAccountReportUserReq.Write)

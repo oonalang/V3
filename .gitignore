@@ -11,3 +11,7 @@ build/
 
 # local syntax-check toolchain (not part of the project)
 .toolchain/
+
+# local verification build output (ndk-build run from src/main/jni)
+src/main/jni/obj/
+src/main/jni/libs/

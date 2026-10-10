@@ -40,7 +40,7 @@ inline void RenderSearchFunction(ImDrawList* draw) {
     
     if (foundCount != -1) {
         ImGui::Spacing();
-        ImGui::SetCursorPosX((315 - ImGui::CalcTextSize("Results found: 999").x) / 2);
+        ImGui::SetCursorPosX((315 - ImGui::CalcTextSize("Results found: 0000").x) / 2);
         ImGui::Text("Results found: %d", foundCount);
     }
 }

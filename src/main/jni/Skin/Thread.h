@@ -445,7 +445,6 @@ inline std::string GetRarityPrefix(int colorID) {
 }
 
 void LoadCharacterSkins() {
-
     if (loadCharacter)
         return;
 
@@ -465,6 +464,18 @@ void LoadCharacterSkins() {
         roleSkins    = RoleSkinConfigInstance;
         rolePacks    = RolePackConfConfigInstance;
         deadboxSkins = BRDeadboxSkinConfigInstance;
+    }
+
+    // Same diagnostic as the weapon loader: these are the ctor instances the
+    // character list is built from, so logcat shows whether those hooks fired.
+    {
+        static size_t lastKey = (size_t) -1;
+        const size_t key = charModels.size() * 31 + roleConfs.size() * 17 + roleSkins.size() * 7 + deadboxSkins.size();
+        if (key != lastKey) {
+            lastKey = key;
+            SKINLOG("loader: char tables models=%zu roleConfs=%zu roleSkins=%zu deadbox=%zu",
+                    charModels.size(), roleConfs.size(), roleSkins.size(), deadboxSkins.size());
+        }
     }
 
     // Each category is loaded as soon as its own source exists: an empty side
@@ -945,7 +956,11 @@ void LoadCharacterSkins() {
 }
 
 void LoadWeaponSkins() {
-    if (loadskinhack) return;
+    // No early return on loadskinhack: that flag is the "we published at least
+    // one weapon" latch from an earlier build. Keeping the return meant that any
+    // pass which produced zero entries (e.g. hooks landed mid-load) permanently
+    // froze the weapon list at whatever the first partial pass found -- the
+    // 'chars 0 weapons 0' symptom. Rebuilding is cheap and idempotent.
 
     std::vector<void*> weaponConfs, itemInvs, weaponAssets, weaponFires, weaponExtras, killEffects, mythicArmors, mythicSights, itemRes;
     {
@@ -961,12 +976,45 @@ void LoadWeaponSkins() {
         itemRes = itemResourceConfigInstance;
     }
 
+    // Diagnostic for the "weapons 0" symptom: the collected ctor instances are
+    // what the loader has to work with. Logged whenever the numbers change, so
+    // logcat shows whether the skin ctor hooks fire at all.
+    {
+        static size_t lastConfs = (size_t) -1, lastInvs = (size_t) -1;
+        if (weaponConfs.size() != lastConfs || itemInvs.size() != lastInvs) {
+            lastConfs = weaponConfs.size();
+            lastInvs = itemInvs.size();
+            SKINLOG("loader: weapon tables confs=%zu invs=%zu (assets=%zu fires=%zu)",
+                    weaponConfs.size(), itemInvs.size(), weaponAssets.size(), weaponFires.size());
+        }
+    }
+
     // The weapon list only needs the weapon configs and their inventory entries;
     // the other tables are optional lookups, so an empty one must not hide the
-    // whole weapon category.
+    // whole weapon category. When the two mandatory tables are still empty we
+    // clear the published UI list once so the Skins tab shows the loader state
+    // instead of stale entries from a previous session.
     if (weaponConfs.empty() || itemInvs.empty()) {
+        static bool clearedEmpty = false;
+        if (!clearedEmpty) {
+            std::lock_guard<std::mutex> lock(g_skinUiMutex);
+            itemData.clear();
+            nameCountMap.clear();
+            clearedEmpty = true;
+        }
         return;
+    } else {
+        static bool clearedEmpty = false;
+        if (clearedEmpty) clearedEmpty = false;
     }
+
+    // Rebuild from scratch: the previous entries reference game objects that may
+    // already be freed, and duplicates from repeated passes confuse the UI.
+    {
+        std::lock_guard<std::mutex> lock(g_skinUiMutex);
+        itemData.clear();
+    }
+    nameCountMap.clear();
 
     std::unordered_map<int, void*> itemInvByItemID;
     std::unordered_map<int, void*> weaponAssetByID;
@@ -1453,12 +1501,21 @@ template <typename HookFn, typename OrigFn>
 inline bool Skins_HookAt(uintptr_t offset, HookFn replace, OrigFn *backup)
 {
     uintptr_t addr = getRealOffset(offset);
-    if (!Tools::IsPtrValid((void *)addr))
+    if (addr == 0 || (addr & 3) != 0 || !Tools::IsExecPtr((void *)addr))
     {
-        SKINERR("hook skipped, bad address: 0x%lx", (unsigned long)offset);
+        // IsExecPtr, not IsPtrValid: patching a readable-but-not-executable page
+        // (a stale RVA landing in .rodata) corrupts game data instead of hooking
+        // code, which shows up as the game dying during the next load.
+        SKINERR("hook skipped, 0x%lx (resolved %p) is not executable code", (unsigned long)offset, (void *)addr);
         return false;
     }
+    uint32_t before = *(volatile uint32_t *)addr;
     DobbyHook((void *)addr, (void *)replace, (void **)backup);
+    if (*(volatile uint32_t *)addr == before)
+    {
+        SKINERR("hook did not take, 0x%lx (resolved %p)", (unsigned long)offset, (void *)addr);
+        return false;
+    }
     return true;
 }
 

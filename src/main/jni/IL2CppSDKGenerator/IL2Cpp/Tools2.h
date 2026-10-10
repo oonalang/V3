@@ -1,3 +1,6 @@
+#pragma once
+// (guard added: this header is reached from several include chains -- without it
+// a second inclusion redefined the inline template helpers)
 #include <map>
 #include <jni.h>
 #include "IL2CppSDKGenerator/Dobby/dobby.h"

@@ -2,6 +2,9 @@
 #ifndef ANDROID_MOD_MENU_MACROS_H
 #define ANDROID_MOD_MENU_MACROS_H
 
+#include <android/log.h>
+#include "IL2CppSDKGenerator/IL2Cpp/Tools.h"
+
 #if defined(__aarch64__) //Compile for arm64 lib only
 #include <And64InlineHook/And64InlineHook.hpp>
 
@@ -11,13 +14,53 @@
 
 #endif
 
-void hook(void *offset, void* ptr, void **orig)
+// ============================================================================
+// Inline-hook installer -- every hook in the mod goes through here (HOOK_LIB,
+// HOOKSYM, the skin ctor table and the triggerbot's Weapon::Tick).
+//
+// Each of those callers hands us an address derived from a hard-coded RVA. When
+// an RVA does not match the game build that is actually running, the old code
+// happily patched *whatever* lives at that address: data, a random middle of an
+// unrelated function, or address 0 + offset when libunity is not mapped yet.
+// That is a crash inside the game's own code, usually during the next load --
+// i.e. "the game will not even start" with nothing in the log.
+//
+// So: verify the target first, patch, then verify the patch actually landed.
+// A refused hook is logged with its address instead of taking the process down.
+// ============================================================================
+inline void hook(void *offset, void* ptr, void **orig)
 {
+    if (ptr == nullptr) {
+        __android_log_print(ANDROID_LOG_ERROR, "MWD-ASTRAL",
+                            "hook REFUSED: null replacement (offset %p)", offset);
+        return;
+    }
+    if (offset == nullptr || ((uintptr_t) offset & 3) != 0 || !Tools::IsExecPtr(offset)) {
+        __android_log_print(ANDROID_LOG_ERROR, "MWD-ASTRAL",
+                            "hook REFUSED: %p is not executable, aligned code -- RVA does not match this build",
+                            offset);
+        return;
+    }
+
+    uint32_t before = *(volatile uint32_t *) offset;
+
 #if defined(__aarch64__)
     A64HookFunction(offset, ptr, orig);
 #else
     MSHookFunction(offset, ptr, orig);
 #endif
+
+    uint32_t after = *(volatile uint32_t *) offset;
+    if (before == after) {
+        // The trampoline writes a branch over the first instruction, so identical
+        // bytes mean the patch did not take (mprotect refused, W^X, etc.).
+        __android_log_print(ANDROID_LOG_ERROR, "MWD-ASTRAL",
+                            "hook did NOT take at %p (page stayed write-protected?)", offset);
+        return;
+    }
+    __android_log_print(ANDROID_LOG_INFO, "MWD-ASTRAL",
+                        "hook installed at %p -> %p (orig %p)", offset, ptr,
+                        orig != nullptr ? *orig : nullptr);
 }
 
 #define HOOK(offset, ptr, orig) hook((void *)getAbsoluteAddress(targetLibName, string2Offset(OBFUSCATE(offset))), (void *)ptr, (void **)&orig)

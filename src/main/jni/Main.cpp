@@ -1730,6 +1730,7 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
         io.MouseDoubleClickTime = 0.22f;
         io.MouseDragThreshold = 1.4f;
         ImGui_ImplOpenGL3_Init("#version 300 es");
+        LOGI("imgui: renderer initialised");
 
         ImFontConfig icomoon_logo_config;
         icomoon_logo_config.MergeMode = false;
@@ -1822,6 +1823,10 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
         else if (font::inter_semibold) io.FontDefault = font::inter_semibold;
         io.Fonts->Build();
         ImGui_ImplOpenGL3_CreateFontsTexture();
+        // Font atlas size is logged because an oversized atlas is cheap to spot
+        // here and very hard to guess from a crash.
+        LOGI("imgui: fonts built, atlas %dx%d, %d faces",
+             io.Fonts->TexWidth, io.Fonts->TexHeight, io.Fonts->Fonts.Size);
 
         memset(&Config, 0, sizeof(sConfig));
 
@@ -1849,6 +1854,7 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
         Config.Pline = 2.0f;
         ui_layout::LoadLayout();
         g_App = true;
+        LOGI("imgui: first frame ready (%dx%d)", g_GlWidth, g_GlHeight);
     }
 
     ImGuiIO *io = &ImGui::GetIO();
@@ -2000,13 +2006,9 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                 const ImVec2 pos = ImGui::GetWindowPos();
                 ImDrawList* draw = ImGui::GetWindowDrawList();
 
-                // dmalogin palette (framework/settings/colors.h) — login only; menu keeps the ECHO accent
-                const ImU32 dmAccent      = IM_COL32(189, 189, 255, 255);   // c->accent
-                const ImU32 dmAccentDim   = IM_COL32(156, 156, 255, 255);   // c->g_accent
-                const ImU32 dmFrame       = IM_COL32(25, 25, 36, 255);      // c->frame_layout
-                const ImU32 dmFrameBorder = IM_COL32(39, 39, 58, 255);      // c->frame_border
-                const ImU32 dmTextMut     = IM_COL32(150, 150, 166, 255);      // redesigned: readable muted
-                const ImU32 dmWhite       = IM_COL32(255, 255, 255, 255);
+                // Colours come from the shared palette (zenin::T, refreshed from
+                // ImGui/imgui_settings.h every frame), so the login and the menu
+                // are one theme instead of two.
 
                 const ImVec2 login_size = ImVec2(640, 460);
 
@@ -2017,7 +2019,9 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                 // brand header, helper copy, license-key field, error row and the
                 // accent "Activate" button, all typeset with Lumin's own fonts.
                 // ══════════════════════════════════════════════════════════════
-                ImFont *mediumFont = font::lumin_medium ? font::lumin_medium : custom::shell::GetTextFont();
+                // Reference body face (Inter Medium 14.5) -- the same font every
+                // widget and menu label draws with, so the login matches the menu.
+                ImFont *mediumFont = custom::shell::GetTextFont();
                 ImFont *titleFont  = custom::shell::GetTitleFont();
                 ImFont *luminIcon  = font::lumin_icon;
 
@@ -2044,7 +2048,7 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
 
                 // ── Card shell (Lumin child fill + glass border) ──────────────
                 draw->AddRectFilled(pos, pos + login_size, zenin::T::WindowBg, 12.0f);
-                draw->AddRect(pos, pos + login_size, IM_COL32(42, 42, 48, 200), 12.0f, 0, 1.2f);
+                draw->AddRect(pos, pos + login_size, zenin::T::Separator, 12.0f, 0, 1.2f);
                 draw->AddRectFilled(pos, ImVec2(pos.x + login_size.x, pos.y + 3.0f),
                                     zenin::T::Accent, 12.0f, ImDrawFlags_RoundCornersTop);
 
@@ -2055,9 +2059,15 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                     const float markS = 46.0f;
                     const ImVec2 markC(markX + markS * 0.5f, markY + markS * 0.5f);
 
-                    draw->AddCircleFilled(markC, markS * 0.80f, IM_COL32(255, 90, 92, 30), 48);
+                    // Breathing fill on the key badge (animated with the frame
+                    // time -- reads as 'alive' without any tween state).
+                    const float breathe = 0.5f + 0.5f * std::sin((float)ImGui::GetTime() * 2.4f);
+                    draw->AddCircleFilled(markC, markS * 0.80f,
+                                          main_runtime_theme::GetAccentTintU32(0.94f, 0.06f + 0.09f * breathe), 48);
                     draw->AddRectFilled(ImVec2(markX, markY), ImVec2(markX + markS, markY + markS),
                                         IM_COL32(28, 28, 32, 255), 12.0f);
+                    draw->AddRect(ImVec2(markX, markY), ImVec2(markX + markS, markY + markS),
+                                  ImGui::GetColorU32(ImVec4(c::accent.x, c::accent.y, c::accent.z, 0.35f)), 12.0f, 0, 1.0f);
                     draw->AddRect(ImVec2(markX, markY), ImVec2(markX + markS, markY + markS),
                                   IM_COL32(255, 90, 92, 90), 12.0f, 0, 1.2f);
                     drawKeyIcon(markC, zenin::T::Accent, 1.15f);
@@ -2148,13 +2158,12 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                     } else if (g_loginInFlight) {
                         drawTextL("Please wait, account verification",
                                   ImVec2(fieldX, errorY + 4.0f), zenin::T::TextMut, 13.0f);
+                        // Arc spinner: sweeps like the reference's busy indicator
+                        // instead of a full circle that looks static.
                         const float spin = (float)ImGui::GetTime() * 3.0f;
                         const ImVec2 sc(fieldX + fieldW - 16.0f, errorY + 17.0f);
                         draw->PathClear();
-                        for (int i = 0; i <= 12; ++i) {
-                            const float a = spin + (float)i / 12.0f * 6.28318f;
-                            draw->PathLineTo(ImVec2(sc.x + std::cos(a) * 9.0f, sc.y + std::sin(a) * 9.0f));
-                        }
+                        draw->PathArcTo(sc, 9.0f, spin, spin + 4.2f, 20);
                         draw->PathStroke(zenin::T::Accent, 0, 2.0f);
                     }
                 }
@@ -2247,6 +2256,7 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                     g_loginInFlight = false;
                     err = loginResult;
                     if (err == "OK") {
+                        LOGI("login: authorized");
                         showKeyboard = false;
                         strncpy(logintext, s, sizeof(logintext) - 1);
                         logintext[sizeof(logintext) - 1] = '\0';
@@ -2256,6 +2266,8 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                         isLogin = true;
                         g_ShowRadialMenu = true;
                         ApplyForbidKickOffOnLogin();
+                    } else {
+                        LOGI("login: rejected (%s)", err.c_str());
                     }
                 }
 
@@ -2481,13 +2493,17 @@ runtimeDrawList->AddRectFilledMultiColor(runtimeWindowPos, ImVec2(runtimeWindowP
                         ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, 6.0f));
 
                         auto headerButton = [&](const char *label, const ImVec2 &pos, const ImVec2 &size, const char *tip) -> bool {
+                            // Short id for the hover animation map, since label is
+                            // unique per button.
                             ImGui::SetCursorScreenPos(pos);
+                            ImGui::PushID(label);
                             ImGui::PushStyleColor(ImGuiCol_Button,        c::button::background);
                             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, c::button::background_hovered);
                             ImGui::PushStyleColor(ImGuiCol_ButtonActive,  c::button::background_active);
                             ImGui::PushStyleColor(ImGuiCol_Border,        c::separator);
                             ImGui::PushStyleColor(ImGuiCol_Text,          c::text::text_active);
-                            const bool pressed = ImGui::Button(label, size);
+                            const bool pressed = ImGui::ButtonEx(label, size, ImGuiButtonFlags_PressedOnClick);
+                            ImGui::PopID();
                             if (tip != nullptr && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
                             ImGui::PopStyleColor(5);
                             return pressed;
@@ -2815,13 +2831,11 @@ runtimeDrawList->AddRectFilledMultiColor(runtimeWindowPos, ImVec2(runtimeWindowP
                                     {
                                         ImGui::Indent(12.0f);
                                         ImGui::TextColored(c::text::text, "Keep playing when the same account logs in elsewhere");
-                                        ImGui::TextUnformatted("instead of being kicked / getting the");
-                                        ImGui::TextUnformatted("logged in on a new device popup.");
+                                        ImGui::TextUnformatted("instead of being kicked out by the");
+                                        ImGui::TextUnformatted("\"logged in on a new device\" popup.");
                                         ImGui::Unindent(12.0f);
                                         custom::Checkbox("Forbid On Login", &Config.ExtraMenu.ForbidKickOffOnLogin);
-                                        ImGui::SetItemTooltip("When enabled, the next successful login");
-                                        ImGui::SetItemTooltip("activates the game's own forbid-kick-off");
-                                        ImGui::SetItemTooltip("so you are not kicked for multi-device.");
+                                        ImGui::SetItemTooltip("Runs the game's own forbid-kick-off hook on the next successful login, so a second device cannot kick you.");
                                     }
                                     custom::Separator_line();
                                     EndContentChild(right);
@@ -3065,6 +3079,13 @@ void Init_Thread()
     }
     LOGI("libunity.so: %p", m_unity);
     UpdateAllOffset();
+    {
+        // Tells us immediately whether the guarded code paths are using the
+        // precise process_vm_readv probe or the /proc/self/maps fallback.
+        char diag[192];
+        Tools::Diag(diag, sizeof diag);
+        LOGI("boot: offsets resolved (%s)", diag);
+    }
 
     Patches.A1 = MemoryPatch::createWithHex("libunity.so", 0x8D781DC, "1F 20 03 D5 E0 03 13 AA");
     Patches.NoCrouch = MemoryPatch::createWithHex("libunity.so",0x511F50C,"00 00 80 D2 C0 03 5F D6");
@@ -3075,7 +3096,9 @@ void Init_Thread()
     DobbyHook((void *)getAbsoluteAddress("libunity.so", 0xC9B6F90), (void *)&WeaponFireComponent_Instant_CreateBulletLine, (void **)&oWeaponFireComponent_Instant_CreateBulletLine);
     DobbyHook((void *)getAbsoluteAddress("libunity.so", 0xC9C33A4), (void *)&WeaponFireComponent_Instant_CreateBulletProjectile, (void **)&oWeaponFireComponent_Instant_CreateBulletProjectile);
     InstallBRClassEspConfigHook();
+    LOGI("boot: installing game hooks");
     InitializeAllHooks();
+    LOGI("boot: game hooks installed");
 
 MemoryPatch::createWithHex("libanogs.so", 0x204218, "00 00 80 D2 C0 03 5F D6").Modify();
 MemoryPatch::createWithHex("libanogs.so", 0x20A39C, "00 00 80 D2 C0 03 5F D6").Modify();
@@ -3092,11 +3115,13 @@ MemoryPatch::createWithHex("libanogs.so", 0x497E64, "00 00 80 D2 C0 03 5F D6").M
 MemoryPatch::createWithHex("libanogs.so", 0x4B68A0, "00 00 80 D2 C0 03 5F D6").Modify();
 MemoryPatch::createWithHex("libanogs.so", 0x4B9C10, "00 00 80 D2 C0 03 5F D6").Modify();
 
+    LOGI("boot: hooking eglSwapBuffers");
     auto swapBuffers = ((uintptr_t)DobbySymbolResolver(OBFUSCATE("libunity.so"), OBFUSCATE("eglSwapBuffers")));
     KittyMemory::ProtectAddr((void *)swapBuffers, sizeof(swapBuffers), PROT_READ | PROT_WRITE | PROT_EXEC);
     xhook_enable_debug(0);
     xhook_register(OBFUSCATE(".*libunity\\.so$"), OBFUSCATE("eglSwapBuffers"), (void*)hook_eglSwapBuffers, (void**)&old_eglSwapBuffers);
     if (xhook_refresh(0) == 0) { xhook_clear(); }
+    LOGI("boot: eglSwapBuffers hooked (orig=%p)", (void *) old_eglSwapBuffers);
 }
 
 __attribute__((constructor))
@@ -3104,10 +3129,11 @@ void native_Init(JNIEnv *env, jclass clazz, jobject mContext) { }
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM* vm, void* reserved)
 {
+    LOGI("boot: JNI_OnLoad (module loaded)");
     jvm = vm;
     VM = vm;
     ZEL_SetVM(vm);
-    std::thread(Init_Thread).detach();
+    std::thread(Init_Thread).detach();   // resolves offsets, installs hooks
     std::thread(Init_Thread2).detach();
     std::thread(Skins_Thread).detach();
     return JNI_VERSION_1_6;

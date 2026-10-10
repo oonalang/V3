@@ -1126,7 +1126,7 @@ case 3:
             }
         }
         
-        if (custom::Checkbox("Platimun Camo", &camoPlatinum)) {
+        if (custom::Checkbox("Platinum Camo", &camoPlatinum)) {
             if (camoPlatinum) {
                 camoOff = false;
                 camoGold = false;
