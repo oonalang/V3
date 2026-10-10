@@ -232,15 +232,60 @@ inline void (*orig_Weapon_StopFire)(void *instance, bool isImmidiately) = nullpt
 
 // True triggerbot: an enemy counts as "on the crosshair" only when its head or
 // body projects onto the actual screen center (the aim point), within a small
-// crosshair margin and in front of the camera. This is deliberately stricter
-// than the FOV-proximity test used by aimbot targeting: A-Fire is not auto aim,
-// it must never fire just because an enemy is somewhere near the crosshair.
+// crosshair margin, in front of the camera, AND physically reachable (not
+// behind a wall). This is deliberately stricter than the FOV-proximity test
+// used by aimbot targeting: A-Fire is not auto aim, it must never fire just
+// because an enemy is somewhere near the crosshair.
 inline float A_FireCrosshairRadiusPx()
 {
     // Tight crosshair zone: 2.5% of the smaller screen dimension (about 24px on
     // a 1080p-wide phone), independent of the aimbot FOV slider.
     const float w = (float)get_width();
     return w * 0.025f;
+}
+
+// Physics.Raycast(camera origin -> head) first-hit distance. Returns -1 when
+// nothing was hit inside the distance, so the caller treats that as clear LOS.
+// The RaycastHit out-struct is a raw scratch buffer: on 64-bit Unity the hit
+// distance sits at +0x20 (m_Collider 8, m_Normal 12, m_Point 12 bytes before
+// it). A nonsense distance (the target game build differs) fails closed so a
+// broken LOS probe can never make the bot fire blind.
+inline float A_FireRaycastDistance(const Vector3 &origin, const Vector3 &dir, float maxDist)
+{
+    if (Class_Physics_Raycast == 0)
+        return -1.0f; // offset not known yet -- do not risk false blocking
+    unsigned char hitBuf[0x40];
+    for (size_t i = 0; i < sizeof(hitBuf); ++i)
+        hitBuf[i] = 0;
+    Vector3 rayDir = dir;
+    auto Raycast = (bool (*)(const Vector3 &, const Vector3 &, float, void *)) (Class_Physics_Raycast);
+    bool hit = Raycast(origin, rayDir, maxDist, hitBuf);
+    if (!hit)
+        return -1.0f;
+    const float d = *(float *) (hitBuf + 0x20);
+    if (!(d >= 0.0f) || !(d <= maxDist + 0.5f))
+        return -2.0f; // malformed layout -> fail closed
+    return d;
+}
+
+// True when the ray from the camera toward the target point is not stopped by
+// geometry before it reaches it (allow ~0.35m slack for skin/collider width).
+// Unknown raycast offset or a malformed result fails CLOSED: the triggerbot
+// then never fires instead of firing at wall-covered enemies.
+inline bool A_FireHasLineOfSight(Camera *cam, const Vector3 &targetPos)
+{
+    if (cam == nullptr)
+        return false;
+    const Vector3 camPos = cam->get_transform()->get_position();
+    Vector3 to = targetPos - camPos;
+    const float dist = sqrtf(to.x * to.x + to.y * to.y + to.z * to.z);
+    if (dist < 0.01f)
+        return true;
+    const float inv = 1.0f / dist;
+    const Vector3 dir(to.x * inv, to.y * inv, to.z * inv);
+    const float hitDist = A_FireRaycastDistance(camPos, dir, dist);
+    // -1 = no hit -> clear; >= 0 hit near/beyond the enemy is skin slack.
+    return hitDist < 0.0f || hitDist >= dist - 0.35f;
 }
 
 inline uintptr_t A_FireFindTarget()
@@ -298,7 +343,8 @@ inline uintptr_t A_FireFindTarget()
                 const float dx = headSc.x - cx;
                 const float dy = headSc.y - cy;
                 const float d2 = dx * dx + dy * dy;
-                if (d2 <= bestDist) { best = pawnU; bestDist = d2; covered = true; }
+                if (d2 <= bestDist && A_FireHasLineOfSight(cam, headPos)) { best = pawnU; bestDist = d2; covered = true; }
+                else if (d2 <= bestDist) { bestDist = d2; /* keep measuring but LOS fails -> not a target */ }
             }
         }
         if (!covered && m_Mesh && Tools::IsPtrValid((void *) m_Mesh)) {
@@ -307,7 +353,7 @@ inline uintptr_t A_FireFindTarget()
                 const float dx = bodySc.x - cx;
                 const float dy = bodySc.y - cy;
                 const float d2 = dx * dx + dy * dy;
-                if (d2 <= bestDist) { best = pawnU; bestDist = d2; }
+                if (d2 <= bestDist && A_FireHasLineOfSight(cam, bodyPos)) { best = pawnU; bestDist = d2; }
             }
         }
     }
@@ -408,52 +454,111 @@ inline bool A_HitboxTargetIsEnemyPawn(void* hitTarget) {
     return false;
 }
 
+// Walks the live enemy list and returns the nearest alive pawn whose body
+// sphere (at the current hitbox scale) intersects the ray. Used when the game
+// sweeps SingleLineCheckPhysics against a collider instead of the pawn -- the
+// previous code ignored those sweeps entirely, so the slider had no effect.
+// Distance along dir where the ray enters the sphere, or -1.0f on a miss.
+inline float A_HitboxRaySphereHitT(const Vector3 &startPos, const Vector3 &dir, const Vector3 &center, float radius)
+{
+    const Vector3 TO = center - startPos;
+    const float proj = Vector3::Dot(TO, dir);
+    const float d2 = Vector3::Dot(TO, TO) - proj * proj;
+    const float r2 = radius * radius;
+    if (d2 > r2)
+        return -1.0f;
+    const float thc = sqrtf(r2 - d2);
+    const float t0 = proj - thc;
+    if (t0 >= 0.0f)
+        return t0;
+    return (proj + thc >= 0.0f) ? 0.0f : -1.0f;
+}
+
+inline Pawn* A_HitboxFindEnemyAlongRay(const Vector3 &startPos, const Vector3 &dir)
+{
+    auto get_MatchGame_f = (uintptr_t (*)()) (Class_Gameplay_get_MatchGame);
+    uintptr_t matchGame = get_MatchGame_f();
+    if (!Tools::IsPtrValid((void *) matchGame))
+        return nullptr;
+
+    auto EnemyPawns = *(List<uintptr_t> **) (matchGame + Class_BaseGame_EnemyPawns);
+    if (!EnemyPawns || !Tools::IsPtrValid((void *) EnemyPawns))
+        return nullptr;
+    auto Items = EnemyPawns->getItems();
+    if (!Items)
+        return nullptr;
+
+    const float hitboxScale = ImClamp(Config.ExtraMenu.HitboxScale, 1.0f, 25.0f);
+    const float bodyRadius = 0.4f + 1.6f * hitboxScale;
+
+    Pawn *best = nullptr;
+    float bestT = FLT_MAX;
+    for (int i = 0; i < EnemyPawns->getSize(); i++) {
+        const uintptr_t pawnU = Items[i];
+        if (!pawnU || !Tools::IsPtrValid((void *) pawnU))
+            continue;
+        Pawn* pawn = (Pawn*)pawnU;
+        if (!pawn->m_IsAlive())
+            continue;
+
+        const float hitT = A_HitboxRaySphereHitT(startPos, dir, pawn->get_LastPawnPos(), bodyRadius);
+        if (hitT >= 0.0f && hitT < bestT) {
+            best = pawn;
+            bestT = hitT;
+        }
+    }
+    return best;
+}
+
+
+// Sphere-vs-ray test used by the hitbox hack. Returns true when the ray from
+// startPos along dir comes within radius of center (or starts inside it).
+inline bool A_HitboxRayHitsSphere(const Vector3 &startPos, const Vector3 &dir, const Vector3 &center, float radius)
+{
+    const Vector3 TO = center - startPos;
+    const float t = Vector3::Dot(TO, dir);
+    const Vector3 closest = (t < 0.0f) ? startPos : (startPos + dir * t);
+    const Vector3 diff = closest - center;
+    const float distSq = diff.x * diff.x + diff.y * diff.y + diff.z * diff.z;
+    return distSq <= radius * radius;
+}
+
 inline bool SingleLineCheckPhysics(void* instance, int hitType, void* hitTarget, void* hitCollider, Vector3 startPos, Vector3 dir, void* impactInfo) {
     if (instance != NULL && Config.ExtraMenu.Hit) {
         const float dirLenSq = dir.x * dir.x + dir.y * dir.y + dir.z * dir.z;
-        if (dirLenSq < 0.0001f) {
-            return orig_SingleLineCheckPhysics(instance, hitType, hitTarget, hitCollider, startPos, dir, impactInfo);
-        }
-
-        Pawn* targetPawn = (Pawn*)hitTarget;
-        if (A_HitboxTargetIsEnemyPawn(hitTarget)) {
-            const float hitboxScale = Config.ExtraMenu.HitboxScale;
-            // Real positions reported by the pawn itself -- not a guessed offset.
-            const Vector3 bodyCenter = targetPawn->get_LastPawnPos();
-            const Vector3 headCenter = targetPawn->get_HeadPosition();
-
-            // Generous body sphere: base 0.5 plus 1.5x HitboxScale, so side/body
-            // shots all count and the slider actually enlarges the enemy a lot.
-            const float bodyRadius = 0.5f + 1.5f * hitboxScale;
-            const float bodyRadiusSq = bodyRadius * bodyRadius;
-
+        if (dirLenSq >= 0.0001f) {
             const float dirInvLen = 1.0f / sqrtf(dirLenSq);
             const Vector3 D(dir.x * dirInvLen, dir.y * dirInvLen, dir.z * dirInvLen);
-            const Vector3 TO = bodyCenter - startPos;
-            const float t = Vector3::Dot(TO, D);
-            const Vector3 closest = (t < 0.0f) ? startPos : (startPos + D * t);
-            const Vector3 diff = closest - bodyCenter;
-            const float distSq = diff.x*diff.x + diff.y*diff.y + diff.z*diff.z;
+            const float hitboxScale = ImClamp(Config.ExtraMenu.HitboxScale, 1.0f, 25.0f);
+            // Slider scales the spheres: 1.0 = close to the real body, 25 = huge.
+            const float bodyRadius = 0.4f + 1.6f * hitboxScale;
+            const float headRadius = 0.22f + 0.28f * hitboxScale;
 
-            bool hitBody = (distSq <= bodyRadiusSq);
+            // Fast path: the game told us exactly what it swept against. Only
+            // usable when that target really is a live enemy pawn -- world
+            // geometry / props / freed pointers pass IsPtrValid() but deref into
+            // garbage (the crash from firing beside an enemy).
+            Pawn* targetPawn = A_HitboxTargetIsEnemyPawn(hitTarget) ? (Pawn*)hitTarget : nullptr;
 
-            // Head zone: real head sphere on the real head position, normal size.
-            // A shot is a headshot ONLY when the ray actually passes through that sphere.
-            const float headRadius = 0.2f + 0.1f * hitboxScale;
-            const float headRadiusSq = headRadius * headRadius;
-            const Vector3 TOh = headCenter - startPos;
-            const float th = Vector3::Dot(TOh, D);
-            const Vector3 closestHead = (th < 0.0f) ? startPos : (startPos + D * th);
-            const Vector3 diffh = closestHead - headCenter;
-            const float distHeadSq = diffh.x*diffh.x + diffh.y*diffh.y + diffh.z*diffh.z;
+            // Fallback: the game often sweeps against colliders or geometry
+            // instead of the pawn, which the fast path ignores -- that was the
+            // "slider does nothing" part. Scan the live enemy list along the ray.
+            if (targetPawn == nullptr) {
+                targetPawn = A_HitboxFindEnemyAlongRay(startPos, D);
+            }
 
-            bool hitHead = (distHeadSq <= headRadiusSq);
+            if (targetPawn != nullptr && targetPawn->m_IsAlive()) {
+                const Vector3 bodyCenter = targetPawn->get_LastPawnPos();
+                const Vector3 headCenter = targetPawn->get_HeadPosition();
 
-            if (hitBody || hitHead) {
-                // Headshot only when the ray actually passes through the head sphere.
-                g_hitboxHitHead = hitHead;
-                g_hitboxHitPawn = targetPawn;
-                return true;
+                const bool hitHead = A_HitboxRayHitsSphere(startPos, D, headCenter, headRadius);
+                const bool hitBody = hitHead || A_HitboxRayHitsSphere(startPos, D, bodyCenter, bodyRadius);
+
+                if (hitBody) {
+                    g_hitboxHitHead = hitHead;
+                    g_hitboxHitPawn = targetPawn;
+                    return true;
+                }
             }
         }
     }

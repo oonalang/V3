@@ -962,6 +962,41 @@ bool wallh;
 bool active = false;
 float AimSmooth = 1.0f;
 bool showKeyboard = false;
+
+// The MISC tab text fields (report spoof / rename card) are button-like custom
+// widgets: ImGui clears the active id as soon as the finger lifts, so gating the
+// virtual keyboard on IsItemActive() made it flash for a single frame and
+// vanish before anything could be typed. Track the focused field ourselves;
+// only the focused field's buffer receives the virtual keyboard input, and the
+// keyboard stays open until the user closes it or focuses another field.
+static char *g_miscFieldBuf = nullptr;
+static size_t g_miscFieldSize = 0;
+static const char *g_miscFieldKbId = nullptr;
+static void MiscTextFieldFocus(const char *kbId, char *buf, size_t size)
+{
+    g_miscFieldBuf = buf;
+    g_miscFieldSize = size;
+    g_miscFieldKbId = kbId;
+    showKeyboard = true;
+}
+static void RenderMiscVirtualKeyboard()
+{
+    if (!showKeyboard || g_miscFieldBuf == nullptr)
+    {
+        if (!showKeyboard)
+        {
+            g_miscFieldBuf = nullptr;
+            g_miscFieldKbId = nullptr;
+        }
+        return;
+    }
+    RenderVirtualKeyboard(g_miscFieldKbId, g_miscFieldBuf, g_miscFieldSize, &showKeyboard);
+    if (!showKeyboard)
+    {
+        g_miscFieldBuf = nullptr;
+        g_miscFieldKbId = nullptr;
+    }
+}
 static bool g_RuntimeClearDisplayInit = false;
 
 struct ClearDisplayDefaultInit {
@@ -2325,15 +2360,13 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                                         static char reportUidBuf[24] = "";
                                         ImGui::TextUnformatted("Report To User ID");
                                         ImGui::AstralInput("##report_uid", reportUidBuf, sizeof(reportUidBuf), ImVec2(ImGui::GetContentRegionAvail().x - 10.0f, 40.0f), nullptr);
-                                        if (ImGui::IsItemClicked()) showKeyboard = true;
-                                        if (showKeyboard && ImGui::IsItemActive()) RenderVirtualKeyboard("##VirtualKeyboardReportUid", reportUidBuf, sizeof(reportUidBuf), &showKeyboard);
+                                        if (ImGui::IsItemClicked()) MiscTextFieldFocus("##VirtualKeyboardReportUid", reportUidBuf, sizeof(reportUidBuf));
                                         Config.ExtraMenu.ReportSpoofTargetId = strtoull(reportUidBuf, nullptr, 10);
 
                                         static char reportNameBuf[32] = "";
                                         ImGui::TextUnformatted("Show As Name (optional)");
                                         ImGui::AstralInput("##report_name", reportNameBuf, sizeof(reportNameBuf), ImVec2(ImGui::GetContentRegionAvail().x - 10.0f, 40.0f), nullptr);
-                                        if (ImGui::IsItemClicked()) showKeyboard = true;
-                                        if (showKeyboard && ImGui::IsItemActive()) RenderVirtualKeyboard("##VirtualKeyboardReportName", reportNameBuf, sizeof(reportNameBuf), &showKeyboard);
+                                        if (ImGui::IsItemClicked()) MiscTextFieldFocus("##VirtualKeyboardReportName", reportNameBuf, sizeof(reportNameBuf));
                                         strncpy(Config.ExtraMenu.ReportSpoofName, reportNameBuf, sizeof(Config.ExtraMenu.ReportSpoofName) - 1);
                                         Config.ExtraMenu.ReportSpoofName[sizeof(Config.ExtraMenu.ReportSpoofName) - 1] = '\0';
 
@@ -2359,8 +2392,7 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                                         static char renameCardGidBuf[12] = "0";
                                         ImGui::TextUnformatted("Name");
                                         ImGui::AstralInput("##rename_name", renameNameBuf, sizeof(renameNameBuf), ImVec2(ImGui::GetContentRegionAvail().x - 10.0f, 40.0f), nullptr);
-                                        if (ImGui::IsItemClicked()) showKeyboard = true;
-                                        if (showKeyboard && ImGui::IsItemActive()) RenderVirtualKeyboard("##VirtualKeyboardRename", renameNameBuf, sizeof(renameNameBuf), &showKeyboard);
+                                        if (ImGui::IsItemClicked()) MiscTextFieldFocus("##VirtualKeyboardRename", renameNameBuf, sizeof(renameNameBuf));
                                         strncpy(Config.ExtraMenu.RenameCardName, renameNameBuf, sizeof(Config.ExtraMenu.RenameCardName) - 1);
                                         Config.ExtraMenu.RenameCardName[sizeof(Config.ExtraMenu.RenameCardName) - 1] = '\0';
 
@@ -2377,8 +2409,7 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
 
                                         ImGui::TextUnformatted("Name Card GID (0 = none)");
                                         ImGui::AstralInput("##rename_gid", renameCardGidBuf, sizeof(renameCardGidBuf), ImVec2(ImGui::GetContentRegionAvail().x - 10.0f, 40.0f), nullptr);
-                                        if (ImGui::IsItemClicked()) showKeyboard = true;
-                                        if (showKeyboard && ImGui::IsItemActive()) RenderVirtualKeyboard("##VirtualKeyboardRenameGid", renameCardGidBuf, sizeof(renameCardGidBuf), &showKeyboard);
+                                        if (ImGui::IsItemClicked()) MiscTextFieldFocus("##VirtualKeyboardRenameGid", renameCardGidBuf, sizeof(renameCardGidBuf));
                                         Config.ExtraMenu.RenameCardGid = atoi(renameCardGidBuf);
                                         }
 
@@ -2401,6 +2432,11 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                                 }
                                 custom::EndGroup();
                             }
+
+                            // Virtual keyboard for the MISC text fields: rendered once
+                            // per frame after all windows so it draws on top and stays
+                            // open for the focused field instead of flashing.
+                            RenderMiscVirtualKeyboard();
 
                             if (runtimeState.activeTab == 4)   // SKINS
                             {
