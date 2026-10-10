@@ -744,9 +744,9 @@ namespace custom
                 }
                 // Card titles use the reference's bold cut (inter_bold, 17px)
                 // rather than the body font.
-                ImFont* card_font = GetCardTitleFont();
+                ImFont* card_font = shell::GetCardTitleFont();
                 const float card_size = (card_font != nullptr) ? card_font->FontSize : 17.0f;
-                const ImVec2 card_text_size = MeasureText(card_font, card_size, name);
+                const ImVec2 card_text_size = shell::MeasureText(card_font, card_size, name);
                 draw->AddText(
                     card_font,
                     card_size,

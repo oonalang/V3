@@ -3,7 +3,7 @@
 #include <jni.h>
 #include <unistd.h>
 #include <mutex>
-#include "Il2cpp.h"
+#include "Il2Cpp.h"
 #include "Fake_dlfcn.h"
 #include "Tools.h"
 //#include "Includes/obfuscate.h"
