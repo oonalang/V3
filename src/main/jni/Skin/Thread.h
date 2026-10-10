@@ -1,3 +1,7 @@
+#include <android/log.h>  // stage tracing for the skin loader
+
+#define SKINLOG(...) ((void)__android_log_print(ANDROID_LOG_INFO, "MWD-ASTRAL-SKIN", __VA_ARGS__))
+#define SKINERR(...) ((void)__android_log_print(ANDROID_LOG_ERROR, "MWD-ASTRAL-SKIN", __VA_ARGS__))
 std::unordered_map<std::string, bool> sBool;
 std::unordered_map<int, int> activeKillEffects;
 std::unordered_map<int, int> activeBulletTrackEffects;
@@ -533,6 +537,7 @@ void LoadCharacterSkins() {
     }
 
     watchLoaded = true;
+    SKINLOG("skin loader: watch list = %d", (int)watch.size());
 
     }
 
@@ -634,6 +639,7 @@ void LoadCharacterSkins() {
     }
 
     deadboxLoaded = true;
+    SKINLOG("skin loader: deadbox list = %d", (int)deadboxF.size());
 
     }
 
@@ -879,6 +885,7 @@ void LoadCharacterSkins() {
     }
 
     charsLoaded = true;
+    SKINLOG("skin loader: character list = %d", (int)charData.size());
 
     }
 
@@ -1433,39 +1440,63 @@ void LoadSnowboardSkins() {
     }
 }
 
+// ───────── crash diagnostics ─────────
+// The skin loader runs on its own thread a few seconds after startup. When it
+// dies there is no stack trace pointing at the step, so every stage logs a line
+// before running: `adb logcat -s MWD-ASTRAL` (or AIDE's logcat) then shows the
+// last stage reached before the crash.
+
+// DobbyHook() on an address that does not match the current game build jumps the
+// game straight into our hook, which takes the whole process down. Probe first
+// and skip (with a log) when the target offset is not mapped yet.
+inline bool Skins_HookAt(uintptr_t offset, void *replace, void **backup)
+{
+    uintptr_t addr = getRealOffset(offset);
+    if (!Tools::IsPtrValid((void *)addr))
+    {
+        SKINERR("hook skipped, bad address: 0x%lx", (unsigned long)offset);
+        return false;
+    }
+    DobbyHook((void *)addr, replace, backup);
+    return true;
+}
+
 void Skins_Thread()
 {
+    SKINLOG("skins thread: waiting for libunity");
     while (!m_unity)
     {
         sleep(1);
     }
 
-    DobbyHook((void*)getRealOffset(Item2InventoryAddress), (void*)my_Item2InventoryCtor, (void**)&orig_Item2InventoryCtor);
-    DobbyHook((void*)getRealOffset(WeaponConfExtraAddress), (void*)my_WeaponConfExtraCtor, (void**)&orig_WeaponConfExtraCtor);
-    DobbyHook((void*)getRealOffset(WeaponFireEffectAddress), (void*)my_WeaponFireEffectCtor, (void**)&orig_WeaponFireEffectCtor);
-    DobbyHook((void*)getRealOffset(WeaponConfAddress), (void*)my_WeaponConfCtor, (void**)&orig_WeaponConfCtor);
-    DobbyHook((void*)getRealOffset(WeaponAssetGroupAddress), (void*)my_WeaponAssetGroupCtor, (void**)&orig_WeaponAssetGroupCtor);
-    DobbyHook((void*)getRealOffset(MythicArmorConfigAddress), (void*)my_MythicArmorCtor, (void**)&orig_MythicArmorCtor);
-    DobbyHook((void*)getRealOffset(MythicSightConfigAddress), (void*)my_MythicSightCtor, (void**)&orig_MythicSightCtor);
-    DobbyHook((void*)getRealOffset(WeaponSkinAddress), (void*)my_WeaponSkinCtor, (void**)&orig_WeaponSkinCtor);
-    DobbyHook((void*)getRealOffset(WeaponCamosAddress), (void*)my_WeaponCamosCtor, (void**)&orig_WeaponCamosCtor);
-    DobbyHook((void*)getRealOffset(KillEffectItemConfConfigAddress), (void*)my_KillEffectItemCtor, (void**)&orig_KillEffectItemCtor);
-    DobbyHook((void*)getRealOffset(ItemResourceAddress), (void*)my_ItemResourceCtor, (void**)&orig_ItemResourceCtor);
-    DobbyHook((void*)getRealOffset(CharacterModelAddress), (void*)my_CharacterModelCtor, (void**)&orig_CharacterModelCtor);
-    DobbyHook((void*)getRealOffset(RoleConfAddress), (void*)my_RoleConfCtor, (void**)&orig_RoleConfCtor);
-    DobbyHook((void*)getRealOffset(RoleSkinAddress), (void*)my_RoleSkinCtor, (void**)&orig_RoleSkinCtor);
-    DobbyHook((void*)getRealOffset(RolePackConfAddress), (void*)my_RolePackConfCtor, (void**)&orig_RolePackConfCtor);
-    DobbyHook((void*)getRealOffset(BRDeadboxSkinAddress), (void*)my_BRDeadboxSkinCtor, (void**)&orig_BRDeadboxSkinCtor);
-    DobbyHook((void*)getRealOffset(BRDropPlaneSkinAddress), (void*)my_BRDropPlaneSkinCtor, (void**)&orig_BRDropPlaneSkinCtor);
-    DobbyHook((void*)getRealOffset(VehicleSkinConfAddress), (void*)my_VehicleSkinConfCtor, (void**)&orig_VehicleSkinConfCtor);
-    DobbyHook((void*)getRealOffset(VehicleItemConfAddress), (void*)my_VehicleItemConfCtor, (void**)&orig_VehicleItemConfCtor);
+    Skins_HookAt(Item2InventoryAddress, my_Item2InventoryCtor, &orig_Item2InventoryCtor);
+    Skins_HookAt(WeaponConfExtraAddress, my_WeaponConfExtraCtor, &orig_WeaponConfExtraCtor);
+    Skins_HookAt(WeaponFireEffectAddress, my_WeaponFireEffectCtor, &orig_WeaponFireEffectCtor);
+    Skins_HookAt(WeaponConfAddress, my_WeaponConfCtor, &orig_WeaponConfCtor);
+    Skins_HookAt(WeaponAssetGroupAddress, my_WeaponAssetGroupCtor, &orig_WeaponAssetGroupCtor);
+    Skins_HookAt(MythicArmorConfigAddress, my_MythicArmorCtor, &orig_MythicArmorCtor);
+    Skins_HookAt(MythicSightConfigAddress, my_MythicSightCtor, &orig_MythicSightCtor);
+    Skins_HookAt(WeaponSkinAddress, my_WeaponSkinCtor, &orig_WeaponSkinCtor);
+    Skins_HookAt(WeaponCamosAddress, my_WeaponCamosCtor, &orig_WeaponCamosCtor);
+    Skins_HookAt(KillEffectItemConfConfigAddress, my_KillEffectItemCtor, &orig_KillEffectItemCtor);
+    Skins_HookAt(ItemResourceAddress, my_ItemResourceCtor, &orig_ItemResourceCtor);
+    Skins_HookAt(CharacterModelAddress, my_CharacterModelCtor, &orig_CharacterModelCtor);
+    Skins_HookAt(RoleConfAddress, my_RoleConfCtor, &orig_RoleConfCtor);
+    Skins_HookAt(RoleSkinAddress, my_RoleSkinCtor, &orig_RoleSkinCtor);
+    Skins_HookAt(RolePackConfAddress, my_RolePackConfCtor, &orig_RolePackConfCtor);
+    Skins_HookAt(BRDeadboxSkinAddress, my_BRDeadboxSkinCtor, &orig_BRDeadboxSkinCtor);
+    Skins_HookAt(BRDropPlaneSkinAddress, my_BRDropPlaneSkinCtor, &orig_BRDropPlaneSkinCtor);
+    Skins_HookAt(VehicleSkinConfAddress, my_VehicleSkinConfCtor, &orig_VehicleSkinConfCtor);
+    Skins_HookAt(VehicleItemConfAddress, my_VehicleItemConfCtor, &orig_VehicleItemConfCtor);
 
+    SKINLOG("skins thread: ctor hooks installed");
     // Skin data is collected on its own thread so a missing helper library can
     // never stall it. The lists start filling as soon as the game creates the
     // config objects, which is what the Skins tab renders.
     std::thread([] {
         // Small head start so the game finishes its early config pass first.
         std::this_thread::sleep_for(std::chrono::seconds(5));
+        SKINLOG("skin loader: starting first pass");
         while (true)
         {
             LoadCharacterSkins();
