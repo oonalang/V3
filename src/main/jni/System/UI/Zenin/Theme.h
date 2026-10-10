@@ -531,7 +531,7 @@ inline int RenderZeninHub(const ImVec2 &defaultCenter)
             }
             else if (active)
             {
-                const float e = ImClamp(ImGui::GetIO().DeltaTime * 14.0f, 0.0f, 1.0f);
+                const float e = Clampf(ImGui::GetIO().DeltaTime * 14.0f, 0.0f, 1.0f);
                 selRect.x += (rmin.x - selRect.x) * e;
                 selRect.y += (rmin.y - selRect.y) * e;
                 selRect.z += (rmax.x - selRect.z) * e;
