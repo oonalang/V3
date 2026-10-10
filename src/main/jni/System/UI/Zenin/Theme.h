@@ -15,6 +15,7 @@
 #include "ImGui/imgui.h"
 #include "ImGui/imgui_internal.h"
 #include "ImGui/Call_ImGui.h"
+#include "ImGui/imgui_settings.h"
 #include "Fonts/Iconcpp.h"
 #include "System/Core/UiLayout.h"
 
@@ -41,9 +42,36 @@ namespace T
     inline ImU32 DockBg        = IM_COL32(24, 24, 27, 255);
     inline ImU32 IconDim       = IM_COL32(150, 150, 158, 255);
 
-    inline float RWindow       = 18.0f;
-    inline float RSection      = 14.0f;
-    inline float RRow          = 8.0f;
+    inline float RWindow       = 12.0f;   // reference bg::rounding
+    inline float RSection      = 8.0f;    // reference child::rounding
+    inline float RRow          = 8.0f;    // reference element::rounding
+
+    // ---------------------------------------------------------------------
+    // The shell used to hard-code the "zenin red" palette while the widgets
+    // read the runtime accent, so half the menu never followed the theme.
+    // RefreshPalette() re-derives every shell colour from the single palette
+    // in ImGui/imgui_settings.h, and is called once per frame right after the
+    // style is applied. Accent now comes from the runtime hue -- whose default
+    // is the reference indigo (101,87,255).
+    // ---------------------------------------------------------------------
+    inline void RefreshPalette()
+    {
+        const ImU32 accent = main_runtime_theme::GetAccentU32(1.0f);
+
+        WindowBg    = ImGui::GetColorU32(c::bg::background);
+        SectionBg   = ImGui::GetColorU32(c::child::cap);
+        RowHover    = ImGui::GetColorU32(c::elements::background_hovered);
+        Text        = ImGui::GetColorU32(c::text::text_active);
+        TextMut     = ImGui::GetColorU32(c::text::text);
+        Accent      = accent;
+        AccentSoft  = main_runtime_theme::GetAccentTintU32(0.94f, 0.22f);
+        Separator   = ImGui::GetColorU32(c::separator);
+        ButtonBg    = ImGui::GetColorU32(c::button::background);
+        ButtonHover = ImGui::GetColorU32(c::button::background_hovered);
+        DockBg      = ImGui::GetColorU32(c::child::cap);
+
+        IconDim     = ImGui::GetColorU32(c::text::text);
+    }
 } // namespace T
 
 // ---------------------------------------------------------------------------

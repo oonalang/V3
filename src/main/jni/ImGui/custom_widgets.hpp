@@ -29,6 +29,8 @@ namespace custom
         ImFont*             GetTextFont();
         ImFont*             GetTitleFont();
         ImFont*             GetIconFont();
+        ImFont*             GetSmallFont();
+        ImFont*             GetCardTitleFont();
         ImVec2              MeasureText(ImFont* font, float size, const char* text);
         float               Normalize(float value, float minValue, float maxValue);
         void                DrawPanelShell(ImDrawList* drawList, const ImVec2& min, const ImVec2& max, float rounding, bool highlighted = false);

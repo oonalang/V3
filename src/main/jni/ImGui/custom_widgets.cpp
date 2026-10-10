@@ -7,8 +7,13 @@ namespace custom
 {
     namespace shell
     {
+        // Reference typography: Inter Medium for body text, the bold cut for
+        // titles, the icon font for glyphs. Falls back progressively so a font
+        // that failed to build can never leave the shell without a font.
         ImFont* GetTextFont()
         {
+            if (font::inter_medium_widget)
+                return font::inter_medium_widget;
             if (font::inter_semibold)
                 return font::inter_semibold;
             if (F50)
@@ -18,8 +23,24 @@ namespace custom
 
         ImFont* GetTitleFont()
         {
+            if (font::inter_medium_big)
+                return font::inter_medium_big;
             if (F50)
                 return F50;
+            return GetTextFont();
+        }
+
+        ImFont* GetSmallFont()
+        {
+            if (font::inter_medium_small)
+                return font::inter_medium_small;
+            return GetTextFont();
+        }
+
+        ImFont* GetCardTitleFont()
+        {
+            if (font::inter_bold)
+                return font::inter_bold;
             return GetTextFont();
         }
 
@@ -27,6 +48,8 @@ namespace custom
         {
             if (F107)
                 return F107;
+            if (font::icomoon_default)
+                return font::icomoon_default;
             return GetTextFont();
         }
 
@@ -107,7 +130,10 @@ namespace custom
             DrawPanelShell(drawList, min, ImVec2(min.x + size.x, min.y + size.y), 11.0f, true);
 
             ImFont* titleFont = GetTitleFont();
-            const float titleFontSize = (titleFont == F50) ? 24.0f : titleFont->FontSize * 1.45f;
+            // The title font is now the reference's 25px Inter bold cut, so use
+            // its real size instead of the old x1.45 fudge that only existed to
+            // grow the 30px fallback face.
+            const float titleFontSize = (titleFont != nullptr) ? titleFont->FontSize : 24.0f;
 
             // Support "Static|Accent" split-color titles
             const char* pipe = title ? strchr(title, '|') : nullptr;
@@ -686,7 +712,13 @@ namespace custom
                                 rounding, ImDrawFlags_RoundCornersTop);
             draw->AddLine(ImVec2(panel_min.x + 12.0f, cap_max.y), ImVec2(panel_max.x - 12.0f, cap_max.y),
                           GetColorU32(ImVec4(c::separator.x, c::separator.y, c::separator.z, 0.75f)), 1.0f);
-            // accent underline under the title (reference child header)
+            // Reference card header: a 1px accent hairline across the very top of
+            // the cap (the reference peeks its accent strip out from under the
+            // cap) plus the short accent underline below the title.
+            draw->AddRectFilled(panel_min,
+                                ImVec2(panel_max.x, panel_min.y + 1.0f),
+                                GetColorU32(c::accent),
+                                rounding, ImDrawFlags_RoundCornersTop);
             draw->AddRectFilled(ImVec2(panel_min.x + 12.0f, cap_max.y - 1.6f),
                                 ImVec2(panel_min.x + 12.0f + 34.0f, cap_max.y - 0.4f),
                                 GetColorU32(c::accent), 1.0f);
@@ -710,8 +742,15 @@ namespace custom
                         text_x += icon_text_size.x + 7.0f * c::scale;
                     }
                 }
+                // Card titles use the reference's bold cut (inter_bold, 17px)
+                // rather than the body font.
+                ImFont* card_font = GetCardTitleFont();
+                const float card_size = (card_font != nullptr) ? card_font->FontSize : 17.0f;
+                const ImVec2 card_text_size = MeasureText(card_font, card_size, name);
                 draw->AddText(
-                    panel_min + ImVec2(text_x, ImMax(5.0f * c::scale, (cap_height - title_size.y) * 0.5f - 1.0f * c::scale)),
+                    card_font,
+                    card_size,
+                    panel_min + ImVec2(text_x, ImMax(5.0f * c::scale, (cap_height - (card_text_size.y > 0.0f ? card_text_size.y : title_size.y)) * 0.5f - 1.0f * c::scale)),
                     GetColorU32(c::text::text_active),
                     name,
                     name_end
@@ -1236,8 +1275,8 @@ namespace custom
         if (hovered) SetMouseCursor(ImGuiMouseCursor_Hand);
 
         const float track_w = 36.0f;
-        const float track_h = 16.0f;
-        const float knob_r  = 7.0f;
+        const float track_h = 14.0f;   // reference pill is 12px inside an 18px row
+        const float knob_r  = 8.0f;    // reference knob is wider than the track
         const ImVec2 track_min(total_bb.Max.x - track_w, total_bb.Min.y + (row_h - track_h) * 0.5f);
         const ImVec2 track_max(track_min.x + track_w, track_min.y + track_h);
         const float travel = track_w - track_h;
@@ -1245,13 +1284,16 @@ namespace custom
         const ImVec2 knob_c(knob_x, (track_min.y + track_max.y) * 0.5f);
 
         const float on = it_anim->second.alpha_mark;
-        const ImVec4 off_track(0.113f, 0.113f, 0.129f, 1.0f);
+        // Palette straight from the reference toggle: off track is
+        // element::filling, on track is the accent, the knob flips between
+        // element::circle_mark and the near-black mark colour.
+        const ImVec4 off_track(c::checkbox::background_off.x, c::checkbox::background_off.y, c::checkbox::background_off.z, 1.0f);
         const ImVec4 on_track(c::accent.x, c::accent.y, c::accent.z, 1.0f);
         const ImVec4 track_color = MixColor(off_track, on_track, on);
-        const ImVec4 off_knob(0.376f, 0.376f, 0.404f, 1.0f);
-        const ImVec4 on_knob(0.055f, 0.055f, 0.065f, 1.0f);
+        const ImVec4 off_knob(c::checkbox::circle_inactive.x, c::checkbox::circle_inactive.y, c::checkbox::circle_inactive.z, 1.0f);
+        const ImVec4 on_knob(c::checkbox::mark.x, c::checkbox::mark.y, c::checkbox::mark.z, 1.0f);
         const ImVec4 knob_color = MixColor(off_knob, on_knob, on);
-        const ImVec4 off_label(0.557f, 0.557f, 0.580f, 1.0f);
+        const ImVec4 off_label(c::text::text.x, c::text::text.y, c::text::text.z, 1.0f);
         const ImVec4 text_color = MixColor(off_label, c::text::text_active, on);
 
         ImDrawList* dl = GetWindowDrawList();
@@ -1261,10 +1303,12 @@ namespace custom
                               GetColorU32(ImVec4(c::accent.x, c::accent.y, c::accent.z, 0.20f * on)),
                               (track_h + 5.0f) * 0.5f);
         dl->AddRectFilled(track_min, track_max, GetColorU32(track_color), track_h * 0.5f);
-        if (on > 0.02f && on < 0.98f)
-            dl->AddCircleFilled(knob_c, knob_r + 3.0f,
-                                GetColorU32(ImVec4(c::accent.x, c::accent.y, c::accent.z, 0.16f)),
-                                26);
+        // Reference "on" treatment: the knob gets the same soft shadow circle the
+        // reference draws around a lit toggle knob.
+        if (on > 0.02f)
+            dl->AddShadowCircle(knob_c, knob_r,
+                                GetColorU32(ImVec4(c::accent.x, c::accent.y, c::accent.z, 0.55f * on)),
+                                30.0f, ImVec2(0.0f, 0.0f), 0, 30);
         dl->AddCircleFilled(knob_c, knob_r, GetColorU32(knob_color), 26);
 
         dl->AddText(ImVec2(total_bb.Min.x, total_bb.Min.y + (row_h - label_size.y) * 0.5f),
@@ -2648,7 +2692,7 @@ namespace custom
         it_anim->second.slow = ImLerp(it_anim->second.slow, grab_x, g.IO.DeltaTime * 20.0f);
 
         ImDrawList* dl = GetWindowDrawList();
-        dl->AddRectFilled(slider_bb.Min, slider_bb.Max, IM_COL32(26, 26, 29, 255), track_h * 0.5f);
+        dl->AddRectFilled(slider_bb.Min, slider_bb.Max, GetColorU32(c::elements::background), track_h * 0.5f);
 
         const float fill_x = ImClamp(it_anim->second.slow, slider_bb.Min.x, slider_bb.Max.x);
         if (fill_x > slider_bb.Min.x + 0.5f)

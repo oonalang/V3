@@ -1670,18 +1670,25 @@ inline bool DrawSidebarPage(const char *id, const char *icon, const char *label,
     ImDrawList *dl = ImGui::GetWindowDrawList();
     const ImU32 accent = zenin::T::Accent;
 
+    // Reference Pages() row: the selected state is an animated fill in
+    // element::page_active, the resting row is empty, and hover gets the same
+    // fill at a fraction of the alpha instead of a grey wash.
     if (a > 0.004f) {
-        dl->AddRectFilled(pos, bbMax,
-                          IM_COL32(255, 90, 92, (int)(40.0f * a)), 10.0f);
-        dl->AddRectFilled(pos, ImVec2(pos.x + 3.0f, bbMax.y), accent, 10.0f,
+        dl->AddRectFilled(pos, bbMax, ImGui::GetColorU32(ImVec4(
+            c::page::background_active.x, c::page::background_active.y,
+            c::page::background_active.z, ImMin(1.0f, c::page::background_active.w * 2.4f) * a)),
+            zenin::T::RRow);
+        dl->AddRectFilled(pos, ImVec2(pos.x + 3.0f, bbMax.y), accent, zenin::T::RRow,
                           ImDrawFlags_RoundCornersLeft);
     } else if (hovered) {
-        dl->AddRectFilled(pos, bbMax, IM_COL32(255, 255, 255, 12), 10.0f);
+        dl->AddRectFilled(pos, bbMax, ImGui::GetColorU32(ImVec4(
+            c::page::background_active.x, c::page::background_active.y,
+            c::page::background_active.z, c::page::background_active.w * 1.1f)),
+            zenin::T::RRow);
     }
-
-    const ImU32 textCol = selected ? IM_COL32(255, 255, 255, 255)
-                        : (hovered ? IM_COL32(216, 216, 222, 255)
-                                   : IM_COL32(138, 138, 146, 255));
+    const ImU32 textCol = selected ? zenin::T::Text
+                        : (hovered ? ImGui::GetColorU32(c::page::text_hov)
+                                   : ImGui::GetColorU32(c::page::text));
     const ImU32 iconCol = selected ? accent : textCol;
 
     ImFont *iconFont = custom::shell::GetIconFont();
@@ -1692,7 +1699,9 @@ inline bool DrawSidebarPage(const char *id, const char *icon, const char *label,
     }
 
     ImFont *labelFont = custom::shell::GetTextFont();
-    const float labelSize = 13.5f;
+    // Native size of the reference label face (Inter Medium, 14.5f) instead of an
+    // arbitrary override, so the rail matches the reference typography.
+    const float labelSize = (labelFont != nullptr && labelFont->FontSize > 1.0f) ? labelFont->FontSize : 13.5f;
     const ImVec2 lsz = labelFont ? labelFont->CalcTextSizeA(labelSize, FLT_MAX, 0.0f, label)
                                  : ImGui::CalcTextSize(label);
     if (labelFont)
@@ -1774,10 +1783,43 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
             (void*)lumin::fonts::icon_font, sizeof(lumin::fonts::icon_font), 15.f,
             &lumin_icon_config, lumin_icon_ranges);
 
+        // ------------------------------------------------------------------
+        // Reference font set, ported from eliwoahzja/imgui. These are the exact
+        // faces and sizes the reference menu draws with (Inter Medium for widget
+        // labels, the bold cut for titles, the icon font for glyphs), so the
+        // shell and every widget now render with the reference typography
+        // instead of borrowing whatever font happened to be current.
+        // ------------------------------------------------------------------
+        ImFontConfig ref_cfg;
+        ref_cfg.MergeMode = false;
+        ref_cfg.PixelSnapH = true;
+        ref_cfg.FontDataOwnedByAtlas = false;
+
+        font::inter_medium_widget = io.Fonts->AddFontFromMemoryTTF(
+            (void *) lumin::fonts::inter_medium, sizeof(lumin::fonts::inter_medium), 14.5f,
+            &ref_cfg, io.Fonts->GetGlyphRangesDefault());
+        font::inter_medium_small = io.Fonts->AddFontFromMemoryTTF(
+            (void *) lumin::fonts::inter_medium, sizeof(lumin::fonts::inter_medium), 14.0f,
+            &ref_cfg, io.Fonts->GetGlyphRangesDefault());
+        font::inter_medium_big = io.Fonts->AddFontFromMemoryTTF(
+            (void *) inter_semibold, sizeof(inter_semibold), 25.0f,
+            &ref_cfg, io.Fonts->GetGlyphRangesDefault());
+        font::inter_bold = io.Fonts->AddFontFromMemoryTTF(
+            (void *) inter_semibold, sizeof(inter_semibold), 17.0f,
+            &ref_cfg, io.Fonts->GetGlyphRangesDefault());
+        font::icomoon = io.Fonts->AddFontFromMemoryTTF(
+            (void *) icomoon_page, sizeof(icomoon_page), 17.0f, &ref_cfg);
+        font::icomoon_default = io.Fonts->AddFontFromMemoryTTF(
+            (void *) icomoon_page, sizeof(icomoon_page), 20.0f, &ref_cfg);
+
         F107 = io.Fonts->AddFontFromMemoryCompressedTTF((void*)font_awesome_data1, (int)font_awesome_size1, 25.0f, &iconsConfig, icons_ranges);
         F50 = io.Fonts->AddFontFromMemoryTTF((void *)F50_data, F50_size, 30.0f, NULL, io.Fonts->GetGlyphRangesDefault());
         if (!F107) F107 = font::inter_semibold;
-        if (font::inter_semibold) io.FontDefault = font::inter_semibold;
+        // Reference typography everywhere: every widget that draws with the
+        // current font (custom_widgets.cpp) now renders in Inter Medium 14.5f,
+        // exactly like the reference menu.
+        if (font::inter_medium_widget) io.FontDefault = font::inter_medium_widget;
+        else if (font::inter_semibold) io.FontDefault = font::inter_semibold;
         io.Fonts->Build();
         ImGui_ImplOpenGL3_CreateFontsTexture();
 
@@ -1939,6 +1981,8 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
 
         runtime_preview_menu::EnsureTexturesLoaded();
         main_runtime_theme::ApplyThemeState();
+        main_runtime_theme::applyReferenceStandardStyle();
+        zenin::T::RefreshPalette();
 
         ImVec2 displaySize = ImGui::GetIO().DisplaySize;
         const ImVec2 viewportCenter = ImVec2(displaySize.x * 0.5f, displaySize.y * 0.5f);
@@ -2030,7 +2074,7 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                 drawTextL("Enter your license key below to unlock the menu.",
                           ImVec2(pos.x + 26.0f, pos.y + 94.0f), zenin::T::TextMut, 12.0f);
                 drawTextL("The key is checked against the license server.",
-                          ImVec2(pos.x + 26.0f, pos.y + 112.0f), IM_COL32(110, 110, 118, 255), 12.0f);
+                          ImVec2(pos.x + 26.0f, pos.y + 112.0f), zenin::T::TextMut, 12.0f);
 
                 // ── LICENSE KEY field (Lumin text_field) ──────────────────────
                 const float fieldX = pos.x + 26.0f;
@@ -2310,7 +2354,8 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                         c::ApplyMainWindowStyle(*runtimeStyle);
                         c::UpdateTheme(runtimeState.dark, menu, ImGui::GetIO().DeltaTime);
                         main_runtime_theme::ApplyThemeState();
-                        main_runtime_theme::applyZeninStandardStyle();
+                        main_runtime_theme::applyReferenceStandardStyle();
+                        zenin::T::RefreshPalette();
 
                         const ImVec2 runtimeWindowSize = ImGui::GetWindowSize();
                         ImVec2 runtimeWindowPos = ImGui::GetWindowPos();
@@ -2336,11 +2381,14 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                             zenin::T::WindowBg, zenin::T::RWindow);
                         runtimeDrawList->AddRect(runtimeWindowPos,
                             ImVec2(runtimeWindowPos.x + runtimeWindowSize.x, runtimeWindowPos.y + runtimeWindowSize.y),
-                            IM_COL32(38, 38, 42, 230), zenin::T::RWindow, 0, 1.3f);
+                            ImGui::GetColorU32(c::separator), zenin::T::RWindow, 0, 1.3f);
                         runtimeDrawList->AddRectFilled(runtimeWindowPos,
                             ImVec2(runtimeWindowPos.x + runtimeWindowSize.x, runtimeWindowPos.y + 3.0f),
                             zenin::T::Accent, zenin::T::RWindow, ImDrawFlags_RoundCornersTop);
-runtimeDrawList->AddRectFilledMultiColor(runtimeWindowPos, ImVec2(runtimeWindowPos.x + runtimeWindowSize.x, runtimeWindowPos.y + 110.0f), IM_COL32(24, 24, 26, 210), IM_COL32(24, 24, 26, 0), IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0));
+runtimeDrawList->AddRectFilledMultiColor(runtimeWindowPos, ImVec2(runtimeWindowPos.x + runtimeWindowSize.x, runtimeWindowPos.y + 110.0f),
+                            ImGui::GetColorU32(ImVec4(c::child::cap.x, c::child::cap.y, c::child::cap.z, 0.82f)),
+                            ImGui::GetColorU32(ImVec4(c::child::cap.x, c::child::cap.y, c::child::cap.z, 0.82f)),
+                            IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0));
 
                         // ── Layout ──────────────────────────────────────────────
                         // Ported from the eliwoahzja/imgui reference menu: a
@@ -2378,13 +2426,18 @@ runtimeDrawList->AddRectFilledMultiColor(runtimeWindowPos, ImVec2(runtimeWindowP
                         runtimeState.activeTab = ImClamp(runtimeState.activeTab, 1, 6);
 
                         // ── Top bar ─────────────────────────────────────────────
-                        runtimeDrawList->AddRectFilled(topbarMin, topbarMax, IM_COL32(13, 13, 15, 255),
+                        // Reference top bar: the strip colour fading into black
+                        // across the full width (immersion_menu AddRectFilledMultiColor).
+                        runtimeDrawList->AddRectFilledMultiColor(topbarMin, topbarMax,
+                                                        ImGui::GetColorU32(ImVec4(c::child::cap.x, c::child::cap.y, c::child::cap.z, 1.0f)),
+                                                        ImGui::GetColorU32(ImVec4(c::child::cap.x, c::child::cap.y, c::child::cap.z, 1.0f)),
+                                                        IM_COL32(0, 0, 0, 110), IM_COL32(0, 0, 0, 110),
                                                         zenin::T::RWindow, ImDrawFlags_RoundCornersTop);
                         runtimeDrawList->AddLine(ImVec2(cardLeft, topbarMax.y), ImVec2(cardRight, topbarMax.y),
                                                  zenin::T::Accent, 1.6f);
 
                         const ImVec2 markCenter(cardLeft + 38.0f, cardTop + topbarHeight * 0.5f);
-                        runtimeDrawList->AddCircleFilled(markCenter, 18.0f, IM_COL32(24, 24, 26, 255), 32);
+                        runtimeDrawList->AddCircleFilled(markCenter, 18.0f, zenin::T::SectionBg, 32);
                         runtimeDrawList->AddCircle(markCenter, 18.0f, zenin::T::Accent, 32, 1.4f);
                         {
                             ImFont *iconFont = custom::shell::GetIconFont();
@@ -2402,7 +2455,7 @@ runtimeDrawList->AddRectFilledMultiColor(runtimeWindowPos, ImVec2(runtimeWindowP
                         const char *titleB = " | ETHNIR NOIR V3";
                         const ImVec2 titleASize = runtimeTitleFont->CalcTextSizeA(runtimeTitleSize, FLT_MAX, 0.0f, titleA);
                         runtimeDrawList->AddText(runtimeTitleFont, runtimeTitleSize,
-                            ImVec2(cardLeft + 66.0f, cardTop + 11.0f), IM_COL32(236, 236, 240, 255), titleA);
+                            ImVec2(cardLeft + 66.0f, cardTop + 11.0f), zenin::T::Text, titleA);
                         runtimeDrawList->AddText(runtimeTitleFont, runtimeTitleSize,
                             ImVec2(cardLeft + 66.0f + titleASize.x, cardTop + 11.0f), zenin::T::Accent, titleB);
 
@@ -2410,7 +2463,7 @@ runtimeDrawList->AddRectFilledMultiColor(runtimeWindowPos, ImVec2(runtimeWindowP
                         char currentCat[64];
                         snprintf(currentCat, sizeof(currentCat), "current: %s", catNames[runtimeState.activeTab - 1]);
                         runtimeDrawList->AddText(runtimeTitleFont, 10.0f,
-                            ImVec2(cardLeft + 67.0f, cardTop + 36.0f), IM_COL32(138, 138, 146, 235), currentCat);
+                            ImVec2(cardLeft + 67.0f, cardTop + 36.0f), zenin::T::TextMut, currentCat);
 
                         // Header actions: BACK / SAVE / HIDE, right aligned before
                         // the round power button.
@@ -2421,16 +2474,19 @@ runtimeDrawList->AddRectFilledMultiColor(runtimeWindowPos, ImVec2(runtimeWindowP
                         const float hGroupW = hBtnW * 3.0f + hBtnGap * 2.0f;
                         const float hGroupStartX = cardRight - 58.0f - hGroupW;
 
-                        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
+                        // Reference element rounding + palette, so the header
+                        // actions sit on the same cards/colors as every widget.
+                        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, c::button::rounding);
                         ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
+                        ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8.0f, 6.0f));
 
                         auto headerButton = [&](const char *label, const ImVec2 &pos, const ImVec2 &size, const char *tip) -> bool {
                             ImGui::SetCursorScreenPos(pos);
-                            ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.141f, 0.141f, 0.149f, 0.95f));
-                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.196f, 0.196f, 0.208f, 1.00f));
-                            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.247f, 0.247f, 0.259f, 1.00f));
-                            ImGui::PushStyleColor(ImGuiCol_Border,        ImVec4(0.278f, 0.278f, 0.290f, 1.00f));
-                            ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.878f, 0.878f, 0.894f, 1.00f));
+                            ImGui::PushStyleColor(ImGuiCol_Button,        c::button::background);
+                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, c::button::background_hovered);
+                            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  c::button::background_active);
+                            ImGui::PushStyleColor(ImGuiCol_Border,        c::separator);
+                            ImGui::PushStyleColor(ImGuiCol_Text,          c::text::text_active);
                             const bool pressed = ImGui::Button(label, size);
                             if (tip != nullptr && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
                             ImGui::PopStyleColor(5);
@@ -2452,7 +2508,7 @@ runtimeDrawList->AddRectFilledMultiColor(runtimeWindowPos, ImVec2(runtimeWindowP
                             isMenuVisible = false;
                         }
 
-                        ImGui::PopStyleVar(2);
+                        ImGui::PopStyleVar(3);
 
                         // Round power button (closes the menu card).
                         {
@@ -2461,13 +2517,13 @@ runtimeDrawList->AddRectFilledMultiColor(runtimeWindowPos, ImVec2(runtimeWindowP
                             const bool closePressed = ImGui::InvisibleButton("##menu_close", ImVec2(32.0f, 32.0f));
                             const bool closeHovered = ImGui::IsItemHovered();
                             runtimeDrawList->AddCircle(closeCenter, 15.0f,
-                                closeHovered ? zenin::T::Accent : IM_COL32(72, 72, 80, 255), 32, 1.6f);
+                                closeHovered ? zenin::T::Accent : ImGui::GetColorU32(c::separator), 32, 1.6f);
                             ImFont *iconFont = custom::shell::GetIconFont();
                             if (iconFont) {
                                 const ImVec2 gsz = custom::shell::MeasureText(iconFont, 13.0f, ICON_FA_POWER_OFF);
                                 runtimeDrawList->AddText(iconFont, 13.0f,
                                     ImVec2(closeCenter.x - gsz.x * 0.5f, closeCenter.y - gsz.y * 0.5f),
-                                    closeHovered ? zenin::T::Accent : IM_COL32(170, 170, 178, 255), ICON_FA_POWER_OFF);
+                                    closeHovered ? zenin::T::Accent : zenin::T::Text, ICON_FA_POWER_OFF);
                             }
                             if (closePressed)
                                 runtime_preview_menu::CollapseMenu(runtimeState);
@@ -2488,7 +2544,7 @@ runtimeDrawList->AddRectFilledMultiColor(runtimeWindowPos, ImVec2(runtimeWindowP
                             float ry = sidebarTop + 14.0f;
 
                             runtimeDrawList->AddText(runtimeTitleFont, 10.0f,
-                                ImVec2(sidebarLeft + 6.0f, ry - 4.0f), IM_COL32(110, 110, 118, 255), "MENU");
+                                ImVec2(sidebarLeft + 6.0f, ry - 4.0f), zenin::T::TextMut, "MENU");
                             ry += 16.0f;
 
                             for (int i = 0; i < 6; ++i) {
@@ -2502,17 +2558,25 @@ runtimeDrawList->AddRectFilledMultiColor(runtimeWindowPos, ImVec2(runtimeWindowP
 
                             runtimeDrawList->AddRectFilled(ImVec2(sidebarLeft + 6.0f, cardBottom - 46.0f),
                                                            ImVec2(sidebarRight - 6.0f, cardBottom - 44.0f),
-                                                           IM_COL32(48, 48, 54, 200), 1.0f);
+                                                           main_runtime_theme::GetAccentTintU32(0.55f, 0.78f), 1.0f);
                             runtimeDrawList->AddText(runtimeTitleFont, 10.0f,
                                 ImVec2(sidebarLeft + 6.0f, cardBottom - 38.0f),
-                                IM_COL32(110, 110, 118, 255), "ethnir noir v3");
+                                zenin::T::TextMut, "ethnir noir v3");
                         }
 
                         runtimeState.tabAlpha = ImClamp(runtimeState.tabAlpha + (4.0f * ImGui::GetIO().DeltaTime * (runtimeState.page == runtimeState.activeTab ? 1.0f : -1.0f)), 0.0f, 1.0f);
                         if (runtimeState.tabAlpha == 0.0f && runtimeState.tabAdd == 0.0f) runtimeState.activeTab = runtimeState.page;
 
-                        runtimeDrawList->AddRectFilled(hostMin, hostMax, IM_COL32(24, 24, 27, 245), 12.0f);
-                        runtimeDrawList->AddRect(hostMin, hostMax, IM_COL32(40, 40, 46, 190), 12.0f, 0, 1.0f);
+                        runtimeDrawList->AddRectFilled(hostMin, hostMax, zenin::T::SectionBg, 12.0f);
+                        runtimeDrawList->AddRect(hostMin, hostMax, ImGui::GetColorU32(c::separator), 12.0f, 0, 1.0f);
+                        // Reference immersion glow: soft accent washes bleeding in
+                        // from the container edges (immersion_menu AddShadowCircle).
+                        {
+                            const ImU32 glow = main_runtime_theme::GetAccentTintU32(0.90f, 0.13f);
+                            runtimeDrawList->AddShadowCircle(ImVec2(hostMin.x, hostMin.y), 110.0f, glow, 400.0f, ImVec2(0, 0), 0, 32);
+                            runtimeDrawList->AddShadowCircle(ImVec2(hostMax.x, hostMin.y), 110.0f, glow, 400.0f, ImVec2(0, 0), 0, 32);
+                            runtimeDrawList->AddShadowCircle(ImVec2((hostMin.x + hostMax.x) * 0.5f, hostMax.y), 110.0f, glow, 400.0f, ImVec2(0, 0), 0, 32);
+                        }
 
                         // Container header: category name + accent underline.
                         {
@@ -2522,7 +2586,7 @@ runtimeDrawList->AddRectFilledMultiColor(runtimeWindowPos, ImVec2(runtimeWindowP
                                 const ImVec2 ssz = sectionFont->CalcTextSizeA(15.0f, FLT_MAX, 0.0f, sectionName);
                                 runtimeDrawList->AddText(sectionFont, 15.0f,
                                     ImVec2(hostMin.x + contentPadding, hostMin.y + 8.0f),
-                                    IM_COL32(236, 236, 240, 255), sectionName);
+                                    zenin::T::Text, sectionName);
                                 runtimeDrawList->AddRectFilled(
                                     ImVec2(hostMin.x + contentPadding, hostMin.y + 8.0f + ssz.y + 2.0f),
                                     ImVec2(hostMin.x + contentPadding + ssz.x, hostMin.y + 8.0f + ssz.y + 3.5f),
@@ -2533,8 +2597,9 @@ runtimeDrawList->AddRectFilledMultiColor(runtimeWindowPos, ImVec2(runtimeWindowP
                         ImGui::SetCursorScreenPos(contentInnerMin);
                         ImGui::BeginChild("##RuntimeContentHost", contentInnerSize, false, ImGuiWindowFlags_NoBackground);
                         {
-                            const bool pushedContentFont = (font::inter_semibold != nullptr);
-                            if (pushedContentFont) ImGui::PushFont(font::inter_semibold);
+                            ImFont *contentFont = font::inter_medium_widget ? font::inter_medium_widget : font::inter_semibold;
+                            const bool pushedContentFont = (contentFont != nullptr);
+                            if (pushedContentFont) ImGui::PushFont(contentFont);
                             ImGui::PushStyleVar(ImGuiStyleVar_Alpha, runtimeState.tabAlpha * runtimeStyle->Alpha);
 
                             const ImVec2 contentRegion = ImGui::GetContentRegionAvail();

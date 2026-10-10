@@ -11,6 +11,19 @@ extern ImFont* F107;
 namespace font
 {
     extern ImFont* inter_semibold;
+
+    // ---------------------------------------------------------------------
+    // Reference font set, ported from eliwoahzja/imgui (imgui_settings.h,
+    // namespace `font`). The widget layer in custom_widgets.cpp draws its
+    // labels with exactly these faces, so the menu typography matches the
+    // reference instead of inheriting whatever font happened to be current.
+    // ---------------------------------------------------------------------
+    inline ImFont* inter_medium_widget = nullptr;  // 14.5f - every widget label
+    inline ImFont* inter_medium_small  = nullptr;  // 14.f  - compact labels
+    inline ImFont* inter_medium_big    = nullptr;  // 25.f  - window title
+    inline ImFont* inter_bold          = nullptr;  // 17.f  - child card titles
+    inline ImFont* icomoon             = nullptr;  // 17.f  - inline glyphs
+    inline ImFont* icomoon_default     = nullptr;  // 20.f  - icon buttons
 }
 
 namespace c
@@ -245,51 +258,8 @@ namespace c
 
 namespace main_runtime_theme
 {
-    // Zenin skin: paints the widget palette red-accent charcoal. Declared above;
-    // this definition must appear after `c::` is fully parsed.
-    inline void applyZeninStandardStyle()
-    {
-            // Zenin palette: charcoal panels + red accent (#FF5A5C).
-            const ImColor accent  = ImColor(255, 90, 92, 255);
-            const ImColor panelHi = ImColor(32, 32, 35, 255);
-            const ImColor textGo  = ImColor(228, 228, 232, 255);
-            const ImColor textMut = ImColor(120, 120, 126, 255);
-            const ImColor sep     = ImColor(46, 46, 50, 200);
 
-            c::accent = accent.Value;
-
-            c::checkbox::background_on  = accent.Value;
-            c::checkbox::background_off = panelHi.Value;
-            c::checkbox::mark           = ImColor(255, 255, 255, 255).Value;
-            c::checkbox::circle_inactive = textMut.Value;
-
-            c::button::background          = ImColor(36, 36, 40, 255).Value;
-            c::button::background_hovered  = ImColor(46, 46, 52, 255).Value;
-            c::button::background_active   = ImColor(52, 52, 58, 255).Value;
-            c::button::outline             = ImColor(70, 70, 78, 180).Value;
-
-            c::child::background = ImColor(24, 24, 27, 255).Value;
-            c::child::cap        = ImColor(22, 22, 25, 245).Value;
-
-            c::page::background_active = ImColor(255, 90, 92, 70).Value;
-            c::page::background        = ImColor(28, 28, 32, 230).Value;
-            c::page::text_hov          = textGo.Value;
-            c::page::text              = textMut.Value;
-
-            c::elements::background         = ImColor(30, 30, 34, 240).Value;
-            c::elements::background_hovered = panelHi.Value;
-
-            c::widget::background   = ImColor(30, 30, 34, 240).Value;
-            c::widget::outlinecolor = ImColor(60, 60, 68, 210).Value;
-
-            c::text::text_active = ImColor(255, 255, 255, 255).Value;
-            c::text::text_hov    = accent.Value;
-            c::text::text        = ImColor(150, 150, 158, 245).Value;
-
-            c::separator = sep.Value;
-    }
-
-    inline float g_menuHue = 0.679f;
+    inline float g_menuHue = 0.6805f;   // reference indigo (101,87,255)
 
     // ============================================================
     // THEME SYSTEM
@@ -336,7 +306,9 @@ namespace main_runtime_theme
             IM_COL32(235, 235, 235, 255),
             IM_COL32(142, 142, 148, 255),
             IM_COL32(45, 45, 45, 255),
-            0.679f, 0.46f, 0.97f,
+            // Reference indigo (101,87,255) expressed as HSV: this is the accent
+            // the migrated eliwoahzja/imgui palette uses.
+            0.6805f, 0.659f, 1.0f,
         },
         // MIDNIGHT
         {
@@ -453,28 +425,100 @@ namespace main_runtime_theme
 
     inline float GetContentPadding()
     {
-        return 10.0f;
+        return 12.0f;
     }
 
     inline float GetColumnGap()
     {
-        return 10.0f;
+        return 12.0f;
     }
 
     inline float GetChildPadding()
     {
-        return 10.0f;
+        return 12.0f;
     }
 
     inline ImVec4 GetSidebarShellBackgroundColor()
     {
-        return ImColor(14, 14, 14, 245);
+        // c::bg::container from the reference palette.
+        return ImColor(7, 8, 10, 252);
     }
 
     inline ImVec4 GetActiveTabBackgroundColor()
     {
-        return ImColor(22, 22, 22, 250);
+        // c::child::top from the reference palette.
+        return ImColor(9, 10, 15, 252);
     }
+
+    // =====================================================================
+    // REFERENCE PALETTE (migrated from eliwoahzja/imgui -> imgui_settings.h)
+    // =====================================================================
+    // Values are the reference's own, namespace `c`:
+    //   accent (101,87,255)  bg::filling (6,7,20)  bg::stroke (19,21,32)
+    //   bg::topbar (7,7,11)  bg::container (7,8,10)  bg::rounding 12
+    //   child::filling (6,9,10,100)  child::stroke (18,20,34)  child::top (9,10,15)
+    //   child::child_text (33,37,62)  child::rounding 8
+    //   element::filling (25,23,48)  element::circle_mark (33,31,59)
+    //   element::text_active (255,255,255)  element::text_hov (111,115,148)
+    //   element::text (75,78,101)  element::rounding 8  combo::filling (15,16,23)
+    // The accent comes from the runtime hue, whose default (0.679) IS the
+    // reference indigo -- previously the shell and this function forced a red
+    // accent while the widgets used the runtime accent, which is why the UI
+    // looked like two different themes stitched together.
+    inline void applyReferenceStandardStyle()
+    {
+        const ImVec4 accent_v = GetAccentVec4(1.0f);
+
+        c::accent = accent_v;
+
+        c::bg::background = ImVec4(6.0f / 255.0f, 7.0f / 255.0f, 20.0f / 255.0f, 245.0f / 255.0f);
+        c::bg::rounding   = 12.0f;
+        c::separator      = ImVec4(19.0f / 255.0f, 21.0f / 255.0f, 32.0f / 255.0f, 1.0f);
+
+        c::child::background = ImVec4(6.0f / 255.0f, 9.0f / 255.0f, 10.0f / 255.0f, 170.0f / 255.0f);
+        c::child::cap        = ImVec4(9.0f / 255.0f, 10.0f / 255.0f, 15.0f / 255.0f, 1.0f);
+        c::child::rounding   = 8.0f;
+        c::child::padding    = 12.0f;
+        c::child::spacing    = 10.0f;
+
+        // Sidebar page rows: the reference animates page_active on top of the
+        // container, so the resting row keeps no fill at all.
+        c::page::background        = ImVec4(0.0f, 0.0f, 0.0f, 0.0f);
+        c::page::background_active = ImVec4(108.0f / 255.0f, 107.0f / 255.0f, 130.0f / 255.0f, 0.16f);
+        c::page::text_hov          = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+        c::page::text              = ImVec4(111.0f / 255.0f, 115.0f / 255.0f, 148.0f / 255.0f, 1.0f);
+        c::page::rounding          = 8.0f;
+
+        c::elements::background         = ImVec4(15.0f / 255.0f, 16.0f / 255.0f, 23.0f / 255.0f, 235.0f / 255.0f);
+        c::elements::background_hovered = ImVec4(25.0f / 255.0f, 23.0f / 255.0f, 48.0f / 255.0f, 240.0f / 255.0f);
+        c::elements::rounding           = 8.0f;
+
+        // Toggle: off track is element::filling, on track is the accent, and the
+        // knob flips between element::circle_mark and the near-black mark colour.
+        c::checkbox::background_off = ImVec4(25.0f / 255.0f, 23.0f / 255.0f, 48.0f / 255.0f, 1.0f);
+        c::checkbox::background_on  = accent_v;
+        c::checkbox::circle_inactive = ImVec4(33.0f / 255.0f, 31.0f / 255.0f, 59.0f / 255.0f, 1.0f);
+        c::checkbox::mark            = ImVec4(14.0f / 255.0f, 14.0f / 255.0f, 17.0f / 255.0f, 1.0f);
+        c::checkbox::rounding        = 30.0f;
+
+        c::text::text_active = ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+        c::text::text_hov    = ImVec4(111.0f / 255.0f, 115.0f / 255.0f, 148.0f / 255.0f, 1.0f);
+        c::text::text        = ImVec4(111.0f / 255.0f, 115.0f / 255.0f, 148.0f / 255.0f, 1.0f);
+
+        c::widget::background   = ImVec4(15.0f / 255.0f, 16.0f / 255.0f, 23.0f / 255.0f, 240.0f / 255.0f);
+        c::widget::outlinecolor = ImVec4(19.0f / 255.0f, 21.0f / 255.0f, 32.0f / 255.0f, 1.0f);
+        c::widget::rounding     = 8.0f;
+
+        // Buttons rest on popup_elements::filling and light up with the accent.
+        c::button::background         = ImVec4(10.0f / 255.0f, 10.0f / 255.0f, 10.0f / 255.0f, 200.0f / 255.0f);
+        c::button::background_hovered = ImVec4(25.0f / 255.0f, 23.0f / 255.0f, 48.0f / 255.0f, 235.0f / 255.0f);
+        c::button::background_active  = ImVec4(33.0f / 255.0f, 31.0f / 255.0f, 59.0f / 255.0f, 245.0f / 255.0f);
+        c::button::outline            = ImVec4(19.0f / 255.0f, 21.0f / 255.0f, 32.0f / 255.0f, 1.0f);
+        c::button::rounding           = 8.0f;
+    }
+
+    // Kept for the existing call sites / config menu.
+    inline void applyZeninStandardStyle() { applyReferenceStandardStyle(); }
 
     inline void ApplyThemeState()
     {
