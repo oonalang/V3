@@ -1509,7 +1509,9 @@ inline void PanicCombatTab()
     Config.ExtraMenu.A_Fire = false;
     Config.ExtraMenu.A_FireTrigger = 0;
     Config.ExtraMenu.A_FireDelay = 0.0f;
-    A_FireReleaseTrigger(nullptr);   // let go of the trigger right away
+    // Let go of the trigger right away, but only ask for it: the actual
+    // StopFire call has to happen on the game thread (see A_FireRequestRelease).
+    A_FireRequestRelease();
 }
 
 inline void PanicMemoryTab()
@@ -1818,10 +1820,11 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
     // callback) so the il2cpp field write can never take the process down.
     ProcessAntiLeak();
 
-    // Triggerbot driver: runs every frame on the game thread instead of relying
-    // on Weapon::Tick, which never fired when the ticked instance did not match
-    // the currently held weapon.
-    A_FireTick();
+    // NOTE: the triggerbot is NOT driven from here. This hook runs on Unity's
+    // render (GfxDeviceWorker) thread, and starting/stopping fire from a foreign
+    // thread while the game thread updates the same fire state is what crashed
+    // the game as soon as live bots gave us a target. A-Fire is driven from the
+    // game-thread hooks instead: Weapon::Tick and the local-player tick.
 
     // Rename card / report spoof: keep the local player's own profile in sync with
     // the menu values (report spoof is applied last so its decoy identity wins).

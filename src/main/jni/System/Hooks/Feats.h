@@ -224,7 +224,21 @@ inline uintptr_t g_hitboxDamageInfo  = 0;
 //-- A-Fire (triggerbot / auto-fire)
 inline bool     g_afireHoldingFire   = false;
 inline void    *g_afireFiringOn      = nullptr;
-inline float    g_afireLastPressTime = -1000.0f;
+inline double   g_afireLastPressTime = -1000.0;
+//-- A-Fire is driven from the GAME thread only (see A_FireTick). Anything
+//-- running on the render/ImGui thread may only raise a flag, never touch
+//-- StartFire/StopFire itself.
+inline bool     g_afireReleaseRequested = false;
+inline double   g_afireLastEvalTime     = -1000.0;
+
+// Monotonic clock for the triggerbot. Deliberately NOT ImGui::GetTime(): the
+// driver runs on the game thread while the render thread owns the ImGui
+// context, and reading ImGui state from both would be a data race.
+inline double A_FireNow()
+{
+    return std::chrono::duration<double>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 
 inline void (*orig_Weapon_Tick)(void *instance, float deltaTime) = nullptr;
 inline void (*orig_Weapon_StartFire)(void *instance) = nullptr;
@@ -360,22 +374,59 @@ inline void A_FireReleaseTrigger(void *instance) {
     }
 }
 
-// Weapon::Tick is still hooked (it is cheap and keeps the original behaviour),
-// but the triggerbot is no longer driven from here: gating on
-// "the ticked instance is the currently held weapon" silently never fired
-// whenever that comparison failed (wrong Tick address, weapon swap, off-hand
-// tick). A_FireTick() below runs from the render loop instead.
+// Render-thread-safe "let go of the trigger" request. The UI and the render hook
+// must never call StopFire themselves -- they raise this flag and the game-thread
+// driver performs the real release, because Weapon::StopFire mutates state the
+// game's own fire-input state machine is updating concurrently.
+inline void A_FireRequestRelease(void) {
+    g_afireReleaseRequested = true;
+}
+
+// Triggerbot driver.
+inline void A_FireTick(void);
+
+// Weapon::Tick is the primary heartbeat for the triggerbot: it runs on the game
+// thread, every frame, for the weapon the game is currently driving. It is used
+// purely as a heartbeat -- the target is always fired through the local pawn's
+// current weapon, so it does not matter which weapon instance ticked.
 inline void hook_Weapon_Tick(void *instance, float deltaTime) {
     if (orig_Weapon_Tick != nullptr)
         orig_Weapon_Tick(instance, deltaTime);
+    A_FireTick();
 }
 
-// Frame driver for the triggerbot. Runs on the game thread every frame from the
-// render hook, so A-Fire works independently of which weapon object the game
-// happens to tick.
+// =====================================================================
+// TRIGGERBOT DRIVER -- GAME THREAD ONLY
+// =====================================================================
+// This used to run from the render hook, and that is what crashed the game the
+// moment live bots appeared (toggle on + moving bots -> crash every time):
+//
+//   1. With Unity's multithreaded renderer the ImGui hook runs on the
+//      GfxDeviceWorker thread, so A_FireTick walked the enemy pawn List while the
+//      game thread was appending/removing pawns -- i.e. it read a reallocated
+//      (freed) items array. Bots spawning and dying is exactly when that happens.
+//   2. It called Weapon::StartFire()/StopFire() from that foreign thread. Those
+//      are mutating game functions which the game's own fire-input state machine
+//      updates on the game thread; calling them concurrently tears the weapon's
+//      fire state apart. That is also why the trigger never actually killed
+//      anyone: the game thread re-derived its own fire state right afterwards.
+//
+// Running the whole feature on the game thread (from the Weapon::Tick and
+// LocalPlayer tick hooks) removes both races, and makes the fire call land inside
+// the game's own update like a real trigger pull.
 inline void A_FireTick()
 {
-    if (!Config.ExtraMenu.A_Fire) {
+    // Weapon::Tick runs for every weapon in the world, so this is entered many
+    // times per frame. One evaluation per ~10ms keeps it at about one scan per
+    // frame. Stamping the time *before* the work is also the re-entrancy guard:
+    // a nested call (StartFire ticking something) is throttled straight out.
+    const double now = A_FireNow();
+    if (now - g_afireLastEvalTime < 0.010)
+        return;
+    g_afireLastEvalTime = now;
+
+    if (!Config.ExtraMenu.A_Fire || g_afireReleaseRequested) {
+        g_afireReleaseRequested = false;
         A_FireReleaseTrigger(nullptr);
         return;
     }
@@ -395,6 +446,11 @@ inline void A_FireTick()
         return;
     }
 
+    // Weapon swapped while the trigger was down -- release the old one first, so
+    // StopFire is never handed a weapon that is no longer the held one.
+    if (g_afireHoldingFire && g_afireFiringOn != (void *) held)
+        A_FireReleaseTrigger(nullptr);
+
     bool ready = A_FireFindTarget() != 0;
 
     if (ready && Config.ExtraMenu.A_FireTrigger == 1)
@@ -403,8 +459,7 @@ inline void A_FireTick()
         ready = Class_Pawn_get_IsFiring != 0 && ((bool (*)(uintptr_t)) Class_Pawn_get_IsFiring)((uintptr_t) local);
 
     if (ready && Config.ExtraMenu.A_FireDelay > 0.0f) {
-        const float now = ImGui::GetTime();
-        if (now - g_afireLastPressTime < Config.ExtraMenu.A_FireDelay)
+        if (now - g_afireLastPressTime < (double) Config.ExtraMenu.A_FireDelay)
             ready = false;
     }
 
@@ -415,12 +470,9 @@ inline void A_FireTick()
             g_afireHoldingFire = true;
             g_afireFiringOn = (void *) held;
         }
-        g_afireLastPressTime = ImGui::GetTime();
+        g_afireLastPressTime = now;
     } else if (g_afireHoldingFire) {
-        if (orig_Weapon_StopFire != nullptr && g_afireFiringOn != nullptr)
-            orig_Weapon_StopFire(g_afireFiringOn, false);
-        g_afireHoldingFire = false;
-        g_afireFiringOn = nullptr;
+        A_FireReleaseTrigger(nullptr);
     }
 }
 
@@ -1027,6 +1079,10 @@ inline void h_TickLocalPlayer(void* ins, float deltaTime) {
     if (SlideRange <= 0.0f) {
         o_TickLocalPlayer(ins, deltaTime);
     }
+    // Second game-thread heartbeat for the triggerbot, so A-Fire keeps working
+    // even if the weapon object is not being ticked this frame (holstered /
+    // switching). A_FireTick() throttles, so this adds no extra cost.
+    A_FireTick();
 }
 
 //-- No Overheat
