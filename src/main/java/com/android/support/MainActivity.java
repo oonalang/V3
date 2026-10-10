@@ -25,6 +25,21 @@ public class MainActivity extends Activity {
 
 	public String GameActivity = "com.tencent.tmgp.cod.CODMainActivity";
 
+	/** Native module built by src/main/jni/Android.mk -> libgspace1.so */
+	public static final String LOCAL_LIBRARY = "gspace1";
+
+	/** Loads the module that ships inside this APK (built from the local sources). */
+	private boolean loadBundledLibrary() {
+		try {
+			System.loadLibrary(LOCAL_LIBRARY);
+			Log.i("ModLoader", "loaded bundled lib" + LOCAL_LIBRARY + ".so (local build)");
+			return true;
+		} catch (Throwable t) {
+			Log.e("ModLoader", "bundled lib" + LOCAL_LIBRARY + ".so unavailable: " + t);
+			return false;
+		}
+	}
+
 	public boolean hasLaunched = false;
 	static ProgressDialog progressDialog;
 	static long serverLastModified;
@@ -57,6 +72,18 @@ public class MainActivity extends Activity {
 
 	
 		String savepath = this.getFilesDir().getAbsolutePath() + "/" + libname;
+
+		// Load the library built from THIS project first (Android.mk module "gspace1",
+		// packaged in the APK as libgspace1.so). The previous flow only ever loaded a
+		// prebuilt library fetched from a server, so source changes (menu UI, login
+		// page, skins) never appeared in the running mod.
+		if (loadBundledLibrary()) {
+			startGame();
+			return;
+		}
+
+		// Fallback: legacy remote download, used only when the local module is not
+		// packaged in this APK.
 		new FileDownloadTask().execute(downloadurl, savepath);
     }
 
@@ -148,16 +175,28 @@ public class MainActivity extends Activity {
 
             File libFile = new File(MainActivity.this.getFilesDir().getAbsolutePath() + "/" + libname);
 
+            // Always prefer the library built with this project. Loading the cached
+            // prebuilt copy here is what made the app run a stale mod and hid every
+            // source change.
+            if (loadBundledLibrary()) {
+                if (result) {
+                    saveLastModifiedTime(serverLastModified);
+                }
+                startGame();
+                return;
+            }
+
+            // Legacy fallback: only reachable when this APK has no local module.
             if (result) {
-               
+
                 saveLastModifiedTime(serverLastModified);
                 if (libFile.exists()) {
-                    
+
                     System.load(libFile.getAbsolutePath());
                     startGame();
                 }
             } else {
-                
+
                 if (libFile.exists()) {
                     System.load(libFile.getAbsolutePath());
                     startGame();
