@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdlib>
 #include "../AstralPrtctn/json.hpp"
 #include <jni.h>
 #include <curl/curl.h>
@@ -515,31 +516,95 @@ std::string Login(const char *user_key) {
             if (!hint.empty())
                 errMsg += " - " + hint;
         } else {
-            try {
-                json result = json::parse(attempt.body);
-                if (result["status"] == true) {
-                    std::string token = result["data"]["token"].get<std::string>();
-                    time_t rng = result["data"]["rng"].get<time_t>();
-                    EXP = result["data"]["EXP"].get<std::string>();
-                    expiryTimestamp = parseExpiryDate(EXP);
-                    if (rng + 30 > time(0)) {
-                        std::string auth = "CODMGR";
-                        auth += "-";
-                        auth += user_key;
-                        auth += "-";
-                        auth += UUID;
-                        auth += "-";
-                        auth += "Vm8Lk7Uj2JmsjCPVPVjrLa7zgfx3uz9E";
-                        std::string outputAuth = CalcMD5(auth);
-                        g_Token = token;
-                        g_Auth = outputAuth;
-                        bValid = g_Token == g_Auth;
-                    }
-                } else {
-                    errMsg = result["reason"].get<std::string>();
+            // ── reply handling, deliberately impossible to abort on ──────────
+            // This module is compiled with -fno-exceptions, so nlohmann's error
+            // path is its JSON_THROW macro, which expands to std::abort(): the
+            // try/catch that used to wrap this block does not even exist at
+            // runtime (it compiles to `if (true) ... if (false) ...`). One
+            // non-JSON body -- the licence host answers refusals with an HTML
+            // block page, and returns an empty body on a timeout -- or one field
+            // that is missing/changed type, killed the whole process from the
+            // login thread. So: parse without exceptions and type-check every
+            // field before reading it.
+            const json result = json::parse(attempt.body, nullptr, false);
+
+            auto fieldString = [](const json &o, const char *key) -> std::string {
+                if (!o.is_object() || !o.contains(key))
+                    return std::string();
+                const json &v = o[key];
+                if (v.is_string())
+                    return v.get_ref<const std::string &>();
+                if (v.is_number_integer())
+                    return std::to_string(v.get<long long>());
+                if (v.is_number_unsigned())
+                    return std::to_string(v.get<unsigned long long>());
+                if (v.is_boolean())
+                    return v.get<bool>() ? "true" : "false";
+                return std::string();
+            };
+            auto fieldBool = [](const json &o, const char *key) -> bool {
+                if (!o.is_object() || !o.contains(key))
+                    return false;
+                const json &v = o[key];
+                if (v.is_boolean())
+                    return v.get<bool>();
+                if (v.is_number_integer())
+                    return v.get<long long>() != 0;
+                if (v.is_string()) {
+                    const std::string text = v.get_ref<const std::string &>();
+                    return text == "true" || text == "1";
                 }
-            } catch (std::exception &e) {
-                errMsg = e.what();
+                return false;
+            };
+            auto fieldNumber = [](const json &o, const char *key) -> long long {
+                if (!o.is_object() || !o.contains(key))
+                    return 0;
+                const json &v = o[key];
+                if (v.is_number())
+                    return (long long) v.get<double>();
+                if (v.is_string()) {
+                    const std::string text = v.get_ref<const std::string &>();
+                    return (long long) std::strtoll(text.c_str(), nullptr, 10);
+                }
+                return 0;
+            };
+
+            if (result.is_discarded() || !result.is_object()) {
+                errMsg = "Server sent an unreadable reply";
+                const std::string hint = ExtractResponseHint(attempt.body);
+                if (!hint.empty())
+                    errMsg += " - " + hint;
+            } else if (!fieldBool(result, "status")) {
+                errMsg = fieldString(result, "reason");
+                if (errMsg.empty())
+                    errMsg = "License refused by the server";
+            } else if (result.contains("data") && result["data"].is_object()) {
+                const json &data = result["data"];
+                const std::string token = fieldString(data, "token");
+                const long long rng = fieldNumber(data, "rng");
+                EXP = fieldString(data, "EXP");
+                expiryTimestamp = parseExpiryDate(EXP);
+                if (token.empty()) {
+                    errMsg = "Server reply had no token";
+                } else if (rng + 30 <= (long long) time(0)) {
+                    errMsg = "Server clock check failed";
+                } else {
+                    std::string auth = "CODMGR";
+                    auth += "-";
+                    auth += user_key;
+                    auth += "-";
+                    auth += UUID;
+                    auth += "-";
+                    auth += "Vm8Lk7Uj2JmsjCPVPVjrLa7zgfx3uz9E";
+                    std::string outputAuth = CalcMD5(auth);
+                    g_Token = token;
+                    g_Auth = outputAuth;
+                    bValid = g_Token == g_Auth;
+                    if (!bValid)
+                        errMsg = "License signature mismatch";
+                }
+            } else {
+                errMsg = "Server reply had no data block";
             }
         }
     }

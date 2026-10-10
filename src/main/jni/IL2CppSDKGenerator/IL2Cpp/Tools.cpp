@@ -11,6 +11,7 @@
 #include <openssl/err.h>
 #include <openssl/md5.h>
 #include <atomic>
+#include <fcntl.h>
 #include <string>
 #include <vector>
 #include <utility>
@@ -246,6 +247,26 @@ bool Tools::IsExecPtr(void *addr) {
 bool Tools::IsPtrValid(void *addr) {
     // A valid pointer is non-null and points into readable mapped memory.
     if (addr == nullptr) return false;
+
+    // Primary probe, taken from the VAR3 build: writing the address as a buffer to
+    // a /dev fd fails with EFAULT when it is not readable user memory. One
+    // syscall, no allocation, no /proc parsing and no range table -- so it also
+    // keeps working now that the stealth layer hooks process_vm_readv, and it
+    // cannot be defeated by the 4096-entry range-table cap.
+    static std::atomic<int> s_probeFd{-2};          // -2 = not opened yet
+    int probeFd = s_probeFd.load(std::memory_order_relaxed);
+    if (probeFd == -2) {
+        const int opened = open("/dev/null", O_WRONLY | O_CLOEXEC);
+        int expected = -2;
+        if (!s_probeFd.compare_exchange_strong(expected, opened >= 0 ? opened : -1)) {
+            if (opened >= 0) close(opened);          // another thread won the race
+        }
+        probeFd = s_probeFd.load(std::memory_order_relaxed);
+    }
+    if (probeFd >= 0)
+        return write(probeFd, addr, 4) >= 0;
+
+    // Fallback for the (unlikely) case where /dev/null could not be opened.
     if (pvm(addr, tools_isvalid_buf, sizeof tools_isvalid_buf)) return true;
 
     const int blocked = g_toolsPvmBlocked.load(std::memory_order_relaxed);

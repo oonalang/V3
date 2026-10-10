@@ -189,6 +189,30 @@ inline bool SafeDobbyHook(const char *lib, uintptr_t rva, void *replace, void **
     return SafeDobbyHookAddr((void *) KittyMemory::getAbsoluteAddress(lib, rva), replace, orig, name);
 }
 
+// ── verified hook using Tools::Hook ─────────────────────────────────────────
+// Tools::Hook does the mprotect-then-DobbyHook dance the anti-cheat hooks have
+// always used; this adds the same proof and landing check as the rest.
+inline bool SafeToolsHook(const char *lib, uintptr_t rva, void *replace, void **orig, const char *label)
+{
+    if (SafeModeEnabled())
+        return false;
+    char name[160];
+    snprintf(name, sizeof name, "%s (%s+0x%lx)", label, lib, (unsigned long) rva);
+
+    void *addr = (void *) KittyMemory::getAbsoluteAddress(lib, rva);
+    if (!SafeTargetOk(addr, name))
+        return false;
+
+    const uint32_t before = *(volatile uint32_t *) addr;
+    Tools::Hook(addr, replace, orig);
+    if (*(volatile uint32_t *) addr == before) {
+        SAFEERR("failed %s: trampoline did not land at %p", name, addr);
+        return false;
+    }
+    SAFELOG("hooked %s at %p", name, addr);
+    return true;
+}
+
 // A range of RVAs, used to blank the protection library's entry page. Only
 // aligned executable targets are touched: the raw loop this replaces also wrote
 // into the ELF header and section table, corrupting the library instead of

@@ -3114,7 +3114,10 @@ size_t hook_strlen(const char *thread)
 
 void Init_Thread2()
 {
-    LOGI("boot: Init_Thread2 started (protection)");
+    LOGI("boot: Init_Thread2 started (stealth + protection)");
+    // Same order as the VAR3 build: make the process unreadable from outside
+    // first, then neutralise the protection library's detectors.
+    InstallStealth();
     InitializeProtection();
 }
 
@@ -3160,17 +3163,12 @@ void Init_Thread()
     InitializeAllHooks();
     LOGI("boot: game hooks installed");
 
-    // Protection-library stubs. Verified + logged; in safe mode none are applied.
-    {
-        static const uintptr_t kProtectionRvAs[] = {
-            0x204218, 0x20A39C, 0x20AE78, 0x25FA98, 0x2AA880, 0x2B63E4, 0x36F0AC, 0x334310, 0x39AE94, 0x44BC90, 0x491EDC, 0x497E64, 0x4B68A0, 0x4B9C10
-        };
-        int applied = 0;
-        for (uintptr_t rva : kProtectionRvAs)
-            if (SafePatchHex("libanogs.so", rva, "00 00 80 D2 C0 03 5F D6", "protection stub"))
-                ++applied;
-        LOGI("boot: protection stubs %d/%d applied", applied, (int)(sizeof(kProtectionRvAs) / sizeof(kProtectionRvAs[0])));
-    }
+    // The protection library is handled by InitializeProtection() on the other
+    // boot thread: it hooks the detectors, the way the VAR3 build does, instead
+    // of blanking a different address list with "mov x0, #0; ret" bytes.
+    // Several addresses that used to be byte-patched here (0x204218, 0x455A80,
+    // 0x39AE94, 0x44BC90) are in that hook list, and writing both would put a
+    // byte patch on top of a live hook trampoline.
 
     LOGI("boot: hooking eglSwapBuffers");
     auto swapBuffers = ((uintptr_t)DobbySymbolResolver(OBFUSCATE("libunity.so"), OBFUSCATE("eglSwapBuffers")));
