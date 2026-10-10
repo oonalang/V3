@@ -327,7 +327,10 @@ inline void RenderMemoryTab(float childWidth, float childHeight) {
     {
         const ChildFrame left = BeginContentChild("MEMORY HACKS##RUNTIME_MEMORY_LEFT", ImVec2(childWidth, childHeight));
         custom::Checkbox("Hitbox", &Config.ExtraMenu.Hit);
-        custom::SliderFloat("Hitbox Size", &Config.ExtraMenu.HitboxScale, 1.0f, 15.0f, "%.1fm");
+        custom::SliderFloat("Hitbox Size", &Config.ExtraMenu.HitboxScale, 0.5f, 25.0f, "%.1fm");
+        custom::SliderFloat("Head Zone", &Config.ExtraMenu.TuneHitboxHeadBand, 0.0f, 1.0f, "%.2f");
+        custom::Checkbox("Headshot", &Config.ExtraMenu.Headshot);
+        custom::SliderFloat("Headshot Damage", &Config.ExtraMenu.HeadshotDamage, 1.0f, 10.0f, "%.1fx");
         custom::Checkbox("No Recoil", &Config.ExtraMenu.Recoil);
         custom::Checkbox("No Spread", &Config.ExtraMenu.Spread);
         custom::Checkbox("No Shake", &Config.ExtraMenu.Shake);
@@ -537,25 +540,34 @@ inline void DrawRuntimeEspPreviewPanel(const ImVec2 &min, const ImVec2 &size) {
     const float charWidth = charHeight * 0.35f;
     
         const float hitboxScale = Config.ExtraMenu.HitboxScale;
-    const float bodyRadius = (0.5f + 0.375f * hitboxScale) * charHeight * 0.15f;
     const float bodyTop = charCenter.y - charHeight * 0.45f;
     const float bodyBot = charCenter.y + charHeight * 0.25f;
+    const float headRadius = charHeight * 0.11f;
+    const ImVec2 headCenter(charCenter.x, bodyTop - headRadius * 1.7f);
 
-    // Hitbox preview: only show the body+head spheres when both the Hit toggle
-    // and the ESP Hitbox toggle are on, matching the in-game ESP behavior.
-    if (Config.ExtraMenu.Hit && Config.ESPMenu.Hitbox) {
-        // Body sphere (scaled with HitboxScale)
-        drawList->AddCircleFilled(charCenter, bodyRadius, IM_COL32(180, 180, 180, 200));
-        drawList->AddCircle(charCenter, bodyRadius, IM_COL32(142, 134, 246, 255), 0, 2.0f);
+    // Hitbox preview, matching what the game now does: the slider is a radius
+    // in METRES measured from the shot ray to the enemy HEAD, so the ring is
+    // drawn around the head and grows with the slider. The metres -> pixels
+    // mapping is compressed for legibility (a true-to-scale 3 m ring would not
+    // fit the panel) but the growth is linear in the slider.
+    if (Config.ExtraMenu.Hit) {
+        const float pxPerMeter = charHeight * 0.22f;
+        const float hitboxRadiusPx = ImMax(3.0f, hitboxScale * pxPerMeter);
+        drawList->AddCircleFilled(headCenter, hitboxRadiusPx, IM_COL32(142, 134, 246, 30));
+        drawList->AddCircle(headCenter, hitboxRadiusPx, IM_COL32(142, 134, 246, 215), 0, 2.0f);
 
-        const float headSphereRadius = (0.25f + 0.125f * hitboxScale) * charHeight * 0.15f;
-        const ImVec2 headCenter(charCenter.x, bodyTop - headSphereRadius * 2.0f);
-        drawList->AddCircleFilled(headCenter, headSphereRadius, IM_COL32(200, 200, 200, 200));
-        drawList->AddCircle(headCenter, headSphereRadius, IM_COL32(255, 48, 48, 255), 0, 2.0f);
+        // Inner band: a shot inside this fraction of the radius auto-reports a
+        // headshot, so it is the part of the hitbox that actually gets heads.
+        const float band = ImClamp(Config.ExtraMenu.TuneHitboxHeadBand, 0.0f, 1.0f);
+        if (band > 0.0f) {
+            drawList->AddCircleFilled(headCenter, hitboxRadiusPx * band, IM_COL32(255, 48, 48, 48));
+            drawList->AddCircle(headCenter, hitboxRadiusPx * band, IM_COL32(255, 48, 48, 200), 0, 1.5f);
+        }
 
-        // Total hitbox extent outline
-        const float totalHitboxRadius = bodyRadius + headSphereRadius * 2.0f;
-        drawList->AddCircle(charCenter, bodyRadius + headSphereRadius * 1.5f, IM_COL32(255, 255, 255, 180), 0, 1.0f);
+        // Body silhouette + the head the ring is centred on.
+        drawList->AddCircleFilled(charCenter, charHeight * 0.16f, IM_COL32(150, 150, 150, 170));
+        drawList->AddCircleFilled(headCenter, headRadius, IM_COL32(200, 200, 200, 205));
+        drawList->AddCircle(headCenter, headRadius, IM_COL32(255, 255, 255, 235), 0, 1.5f);
     }
 
         const ImVec2 boxMin(charCenter.x - charWidth * 0.5f, bodyTop);
@@ -607,7 +619,7 @@ inline void DrawRuntimeEspPreviewPanel(const ImVec2 &min, const ImVec2 &size) {
 
         if (Config.ExtraMenu.Hit) {
         char hitboxInfo[64];
-        std::snprintf(hitboxInfo, sizeof(hitboxInfo), "Hitbox: %.1f", hitboxScale);
+        std::snprintf(hitboxInfo, sizeof(hitboxInfo), "Hitbox: %.1f m (head)", hitboxScale);
         drawList->AddText(textFont, 10.0f,
             ImVec2(boxCenter.x - 30.0f, boxMax.y + 22.0f), IM_COL32(142, 134, 246, 255), hitboxInfo);
     }

@@ -221,11 +221,24 @@ inline float hook_GetMaxJumpHeight(void* instance) {
     return (jumpHeightMultiplier > 1.0f) ? orig_ * jumpHeightMultiplier : orig_;
 }
 
-//-- Increase Damage
+// Maps the Aim tab's "Hit Group" selector onto the game's EHitGroup values.
+inline int A_HitGroupFromSelect(int sel)
+{
+    switch (sel) {
+        case HitGroupHead:      return EHitGroup_Head;
+        case HitGroupHand:      return EHitGroup_Hand;
+        case HitGroupBody:      return EHitGroup_Body;
+        case HitGroupFoot:      return EHitGroup_Foot;
+        case HitGroupWeakPoint: return EHitGroup_WeakPoint;
+        case HitGroupNeck:      return EHitGroup_Neck;
+        default:                return EHitGroup_Default;
+    }
+}
+
+//-- Hitbox / "increase damage"
 inline bool (*orig_SingleLineCheckPhysics)(void* instance, int hitType, void* hitTarget, void* hitCollider, Vector3 startPos, Vector3 dir, void* impactInfo) = nullptr;
 
 
-inline void*  g_hitboxHitPawn     = nullptr;  
 inline bool   g_hitboxHitHead       = false;    
 inline uintptr_t g_hitboxDamageInfo  = 0;
 
@@ -527,14 +540,65 @@ inline void A_FireTick(void *tickedWeapon)
     }
 }
 
-// Cross-check the hit target against the live enemy list before treating it as
-// a Pawn. A bare IsPtrValid() only proves the address is mapped memory: world
-// geometry, prefabs and freed pawns all pass it, and calling get_LastPawnPos /
-// get_HeadPosition on one of those dereferences garbage and takes the game down
-// (the crash when enabling the hitbox and firing beside an enemy).
-inline bool A_HitboxTargetIsEnemyPawn(void* hitTarget) {
-    if (hitTarget == nullptr || !Tools::IsPtrValid(hitTarget))
+// ---------------------------------------------------------------------------
+// Hitbox / "increase damage" -- ported from the variant-3 (eliwoahzja/V3) build.
+//
+// VAR3's version returned true from SingleLineCheckPhysics for every shot. The
+// V3 revision makes that adjustable: a shot is accepted when the ray passes
+// within Config.ExtraMenu.HitboxScale METRES of a live enemy's head
+// (Pawn::get_HeadPosition), so the slider grows the hitbox around the head
+// rather than around the world.
+//
+// Three things here are deliberate, and they are why the previous body-sphere
+// version could never land a shot:
+//   1. On an accept we return true WITHOUT running the original. The original
+//      runs the real sweep and, on a miss, writes miss state into the caller's
+//      [Out] slots (hitTarget / hitCollider / impactInfo). Running it first and
+//      then forcing a hit handed the shot back with a target the caller had
+//      already been told was empty.
+//   2. We never write through those out parameters. They are not guaranteed to
+//      be Object** slots, so poking a pawn pointer through them is both useless
+//      (the caller does not read it) and a memory-corruption crash.
+//   3. The test is measured against the head, not the feet. That is what makes
+//      the slider an aim-at-the-head knob: a shot that lands inside the inner
+//      band of the radius raises g_hitboxHitHead, and the damage hook then
+//      reports EHitGroup_Head for a real headshot.
+// ---------------------------------------------------------------------------
+
+// Radius of the enlarged hitbox in metres, measured from the shot ray to the
+// enemy head. This is exactly what the "Hitbox Size" slider sets.
+inline float A_HitboxRadius()
+{
+    const float scale = Config.ExtraMenu.HitboxScale;
+    if (!(scale > 0.0f))                 // also rejects NaN
+        return 0.0f;
+    return ImClamp(scale, 0.1f, 25.0f);
+}
+
+// Inner fraction of the radius that still counts as a head hit for the
+// automatic hit group (0..1). 0 disables the automatic headshot.
+inline float A_HitboxHeadBandFraction()
+{
+    const float band = Config.ExtraMenu.TuneHitboxHeadBand;
+    if (!(band >= 0.0f))
+        return 0.0f;
+    return ImClamp(band, 0.0f, 1.0f);
+}
+
+// True when the shot ray (startPos + t*dir, t > 0) passes within the hitbox
+// radius of a live enemy's head. The V3 test, kept verbatim:
+//     alongRay   = dot(head - start, normalized(dir))    -- metres along the ray
+//     missDistSq = |head - start|^2 - alongRay^2         -- perpendicular distance^2
+//     hit when alongRay > 0 and missDistSq <= radius^2
+inline bool A_HitboxRayPassesEnemyHead(const Vector3 &startPos, const Vector3 &dir)
+{
+    const float radius = A_HitboxRadius();
+    if (radius <= 0.0f)
         return false;
+
+    if (!(Vector3::Magnitude(dir) > 0.0001f))
+        return false;
+    const Vector3 rayAxis = Vector3::Normalized(dir);
 
     auto get_MatchGame_f = (uintptr_t (*)()) (Class_Gameplay_get_MatchGame);
     uintptr_t matchGame = get_MatchGame_f();
@@ -548,148 +612,63 @@ inline bool A_HitboxTargetIsEnemyPawn(void* hitTarget) {
     if (!Items)
         return false;
 
-    const uintptr_t target = (uintptr_t)hitTarget;
-    for (int i = 0; i < EnemyPawns->getSize(); i++) {
-        if (Items[i] == target)
-            return true;
+    const float radiusSq = radius * radius;
+    const float headBand = A_HitboxHeadBandFraction();
+    const float headBandRadiusSq = radiusSq * headBand * headBand;
+
+    const int count = EnemyPawns->getSize();
+    for (int i = 0; i < count; i++) {
+        const uintptr_t pawnU = Items[i];
+        if (!pawnU || !Tools::IsPtrValid((void *) pawnU))
+            continue;
+        Pawn *pawn = (Pawn *) pawnU;
+        if (!pawn->m_IsAlive())
+            continue;
+
+        const Vector3 toHead = pawn->get_HeadPosition() - startPos;
+        const float alongRay = Vector3::Dot(toHead, rayAxis);
+        if (alongRay <= 0.0f)            // head is behind the shooter
+            continue;
+
+        const float missDistSq = Vector3::Dot(toHead, toHead) - alongRay * alongRay;
+        if (missDistSq > radiusSq)       // outside the enlarged hitbox
+            continue;
+
+        // Inside the inner band -> mark the shot as a head hit so the damage
+        // hook can report EHitGroup_Head without the manual toggle.
+        g_hitboxHitHead = (headBandRadiusSq > 0.0f && missDistSq <= headBandRadiusSq);
+        return true;
     }
     return false;
 }
 
-// Walks the live enemy list and returns the nearest alive pawn whose body
-// sphere (at the current hitbox scale) intersects the ray. Used when the game
-// sweeps SingleLineCheckPhysics against a collider instead of the pawn -- the
-// previous code ignored those sweeps entirely, so the slider had no effect.
-// Distance along dir where the ray enters the sphere, or -1.0f on a miss.
-inline float A_HitboxRaySphereHitT(const Vector3 &startPos, const Vector3 &dir, const Vector3 &center, float radius)
-{
-    const Vector3 TO = center - startPos;
-    const float proj = Vector3::Dot(TO, dir);
-    const float d2 = Vector3::Dot(TO, TO) - proj * proj;
-    const float r2 = radius * radius;
-    if (d2 > r2)
-        return -1.0f;
-    const float thc = sqrtf(r2 - d2);
-    const float t0 = proj - thc;
-    if (t0 >= 0.0f)
-        return t0;
-    return (proj + thc >= 0.0f) ? 0.0f : -1.0f;
-}
-
-inline Pawn* A_HitboxFindEnemyAlongRay(const Vector3 &startPos, const Vector3 &dir)
-{
-    auto get_MatchGame_f = (uintptr_t (*)()) (Class_Gameplay_get_MatchGame);
-    uintptr_t matchGame = get_MatchGame_f();
-    if (!Tools::IsPtrValid((void *) matchGame))
-        return nullptr;
-
-    auto EnemyPawns = *(List<uintptr_t> **) (matchGame + Class_BaseGame_EnemyPawns);
-    if (!EnemyPawns || !Tools::IsPtrValid((void *) EnemyPawns))
-        return nullptr;
-    auto Items = EnemyPawns->getItems();
-    if (!Items)
-        return nullptr;
-
-    const float hitboxScale = ImClamp(Config.ExtraMenu.HitboxScale, 1.0f, 25.0f);
-    const float bodyRadius = 0.4f + 1.6f * hitboxScale;
-
-    Pawn *best = nullptr;
-    float bestT = FLT_MAX;
-    for (int i = 0; i < EnemyPawns->getSize(); i++) {
-        const uintptr_t pawnU = Items[i];
-        if (!pawnU || !Tools::IsPtrValid((void *) pawnU))
-            continue;
-        Pawn* pawn = (Pawn*)pawnU;
-        if (!pawn->m_IsAlive())
-            continue;
-
-        const float hitT = A_HitboxRaySphereHitT(startPos, dir, pawn->get_LastPawnPos(), bodyRadius);
-        if (hitT >= 0.0f && hitT < bestT) {
-            best = pawn;
-            bestT = hitT;
-        }
-    }
-    return best;
-}
-
-
-// Sphere-vs-ray test used by the hitbox hack. Returns true when the ray from
-// startPos along dir comes within radius of center (or starts inside it).
-inline bool A_HitboxRayHitsSphere(const Vector3 &startPos, const Vector3 &dir, const Vector3 &center, float radius)
-{
-    const Vector3 TO = center - startPos;
-    const float t = Vector3::Dot(TO, dir);
-    const Vector3 closest = (t < 0.0f) ? startPos : (startPos + dir * t);
-    const Vector3 diff = closest - center;
-    const float distSq = diff.x * diff.x + diff.y * diff.y + diff.z * diff.z;
-    return distSq <= radius * radius;
-}
+typedef bool (*SingleLineCheckPhysicsFn)(void *, int, void *, void *, Vector3, Vector3, void *);
+inline SingleLineCheckPhysicsFn orig_SingleLineCheckPhysics_Instant = nullptr;
 
 // Shared body for the hitbox hook. It is installed on BOTH the base
 // WeaponFireComponent::SingleLineCheckPhysics (0xC1514C0) and the
 // WeaponFireComponent_Instant override (0xC9B2A9C). A normal gun dispatches to
 // the Instant override -- hooking only the base meant the whole feature never
 // ran for the weapons the player actually holds.
-typedef bool (*SingleLineCheckPhysicsFn)(void *, int, void *, void *, Vector3, Vector3, void *);
-inline SingleLineCheckPhysicsFn orig_SingleLineCheckPhysics_Instant = nullptr;
-
 inline bool SingleLineCheckPhysicsCommon(SingleLineCheckPhysicsFn orig,
                                          void *instance, int hitType,
                                          void *hitTarget, void *hitCollider,
                                          Vector3 startPos, Vector3 dir,
                                          void *impactInfo)
 {
-    if (instance == nullptr || orig == nullptr || !Config.ExtraMenu.Hit)
-        return orig(instance, hitType, hitTarget, hitCollider, startPos, dir, impactInfo);
-
-    const float dirLenSq = dir.x * dir.x + dir.y * dir.y + dir.z * dir.z;
-    if (dirLenSq < 0.0001f)
-        return orig(instance, hitType, hitTarget, hitCollider, startPos, dir, impactInfo);
-
-    const float dirInvLen = 1.0f / sqrtf(dirLenSq);
-    const Vector3 D(dir.x * dirInvLen, dir.y * dirInvLen, dir.z * dirInvLen);
-
-    // First let the game resolve its own, real hit. When it succeeds its
-    // [Out]/ref arguments (impactInfo / hitTarget / hitCollider) are populated
-    // for real, which is what the caller needs to actually apply damage.
-    if (orig(instance, hitType, hitTarget, hitCollider, startPos, dir, impactInfo))
-    {
-        g_hitboxHitHead = false;
-        g_hitboxHitPawn = nullptr;
+    // The hitbox answers before the game's sweep runs, exactly like V3: the
+    // shot passed near a head, so it is a hit, and the caller's [Out] slots are
+    // left exactly as it set them up.
+    if (instance != nullptr && orig != nullptr && Config.ExtraMenu.Hit &&
+        A_HitboxRayPassesEnemyHead(startPos, dir))
         return true;
-    }
 
-    // The game found nothing, but the shot ray passes through an enemy pawn
-    // inside the scaled hitbox sphere. Force the hit and -- the part the old
-    // code omitted -- publish the target into the caller's [Out] slot so the
-    // shot is not silently thrown away.
-    const float hitboxScale = ImClamp(Config.ExtraMenu.HitboxScale, 1.0f, 25.0f);
-    const float bodyRadius = 0.4f + 1.6f * hitboxScale;
-    const float headRadius = 0.22f + 0.28f * hitboxScale;
-
-    Pawn *targetPawn = A_HitboxFindEnemyAlongRay(startPos, D);
-    if (targetPawn != nullptr && targetPawn->m_IsAlive())
-    {
-        const Vector3 bodyCenter = targetPawn->get_LastPawnPos();
-        const Vector3 headCenter = targetPawn->get_HeadPosition();
-
-        const bool hitHead = A_HitboxRayHitsSphere(startPos, D, headCenter, headRadius);
-        const bool hitBody = hitHead || A_HitboxRayHitsSphere(startPos, D, bodyCenter, bodyRadius);
-
-        if (hitBody)
-        {
-            // [Out] object hitTarget is an object reference slot on the caller's
-            // stack -- write the forced pawn through it.
-            if (hitTarget != nullptr)
-                *(void **) hitTarget = (void *) targetPawn;
-            g_hitboxHitHead = hitHead;
-            g_hitboxHitPawn = targetPawn;
-            return true;
-        }
-    }
-
-    g_hitboxHitHead = false;
-    g_hitboxHitPawn = nullptr;
+    // Not an enlarged-hitbox shot: let the game resolve it for real. The head
+    // flag is deliberately NOT cleared here -- several sweeps can run for one
+    // shot, and a later miss must not erase the head hit an earlier sweep
+    // recorded. The damage hook consumes and clears it.
+    if (orig != nullptr)
+        return orig(instance, hitType, hitTarget, hitCollider, startPos, dir, impactInfo);
     return false;
 }
 
@@ -705,36 +684,32 @@ inline bool SingleLineCheckPhysics_Instant(void *instance, int hitType, void *hi
 
 inline void* (*orig_CalcDamageInfoInstantHit)(void* instance, void** inImpactInfo, unsigned char inFireMode, void* sourcePos, int clientTime, int ammoCount, float punchX, float punchY, float spreadX, float spreadY, float fightOffSpeed, float fightOffUp) = nullptr;
 inline void* CalcDamageInfoInstantHit(void* instance, void** inImpactInfo, unsigned char inFireMode, void* sourcePos, int clientTime, int ammoCount, float punchX, float punchY, float spreadX, float spreadY, float fightOffSpeed, float fightOffUp) {
-    void* damageInfo = orig_CalcDamageInfoInstantHit(instance, inImpactInfo, inFireMode, sourcePos, clientTime, ammoCount, punchX, punchY, spreadX, spreadY, fightOffSpeed, fightOffUp);
-    g_hitboxDamageInfo = (uintptr_t)damageInfo;
-    if (Config.ExtraMenu.Hit && damageInfo != NULL) {
-       const uintptr_t di = (uintptr_t)damageInfo;
+    void* damageInfo = (orig_CalcDamageInfoInstantHit != nullptr)
+        ? orig_CalcDamageInfoInstantHit(instance, inImpactInfo, inFireMode, sourcePos, clientTime, ammoCount, punchX, punchY, spreadX, spreadY, fightOffSpeed, fightOffUp)
+        : nullptr;
+    g_hitboxDamageInfo = (uintptr_t) damageInfo;
 
-       // EHitGroupSelect::HitGroupAuto (0) = the hitbox code decides. In that case
-       // trust the headzone flag the ray test set when it passed through the head
-       // sphere; the old fallback that re-derived a headshot from the damage-info
-       // hit point was unreliable and is what made headshots stop landing.
-       int hitGroup = EHitGroup_Body;
-        switch (Config.Aim.HitGroup) {
-            case HitGroupHead:      hitGroup = EHitGroup_Head;      break;
-            case HitGroupHand:      hitGroup = EHitGroup_Hand;      break;
-            case HitGroupBody:      hitGroup = EHitGroup_Body;      break;
-            case HitGroupFoot:      hitGroup = EHitGroup_Foot;      break;
-            case HitGroupWeakPoint: hitGroup = EHitGroup_WeakPoint; break;
-            case HitGroupNeck:      hitGroup = EHitGroup_Neck;      break;
-            default: {
-               if (g_hitboxHitHead) {
-                    hitGroup = EHitGroup_Head;
-                }
-                break;
-            }
+    if (damageInfo != nullptr) {
+        const uintptr_t di = (uintptr_t) damageInfo;
+
+        // Which hit group this shot reports, in priority order:
+        //   1. the explicit Headshot toggle  -> head + damage multiplier
+        //      (this is the variant-3 "Headshot" feature, DamageInfo+0x54/+0x14),
+        //   2. the hitbox's automatic head zone -> head only,
+        //   3. the manual Aim -> Hit Group override,
+        //   4. otherwise the game's own hit group is left untouched.
+        if (Config.ExtraMenu.Headshot) {
+            *(int *) (di + Class_DamageInfo_m_HitGroup) = EHitGroup_Head;
+            *(float *) (di + Class_DamageInfo_m_Damage) *=
+                ImClamp(Config.ExtraMenu.HeadshotDamage, 1.0f, 10.0f);
+        } else if (Config.ExtraMenu.Hit && g_hitboxHitHead) {
+            *(int *) (di + Class_DamageInfo_m_HitGroup) = EHitGroup_Head;
+        } else if (Config.Aim.HitGroup != HitGroupAuto) {
+            *(int *) (di + Class_DamageInfo_m_HitGroup) = A_HitGroupFromSelect((int) Config.Aim.HitGroup);
         }
-
-        *(int*)(di + Class_DamageInfo_m_HitGroup) = hitGroup;
-
-       g_hitboxHitHead = false;
-        g_hitboxHitPawn = nullptr;
     }
+
+    g_hitboxHitHead = false;
     return damageInfo;
 }
 

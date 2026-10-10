@@ -1518,6 +1518,8 @@ inline void PanicMemoryTab()
 {
     Config.ExtraMenu.Hit = false;
     Config.ExtraMenu.HitboxScale = 3.0f;          // back to the struct default
+    Config.ExtraMenu.Headshot = false;
+    Config.ExtraMenu.HeadshotDamage = 2.0f;
     Config.ExtraMenu.TuneHitboxHeadBand = 0.35f;
     Config.ExtraMenu.Recoil = false;
     Config.ExtraMenu.Spread = false;
@@ -2736,8 +2738,14 @@ runtimeDrawList->AddRectFilledMultiColor(runtimeWindowPos, ImVec2(runtimeWindowP
                                     custom::Checkbox("Hitbox", &Config.ExtraMenu.Hit);
                                     if (Config.ExtraMenu.Hit) {
                                         custom::SliderFloat("Hitbox Size", &Config.ExtraMenu.HitboxScale, 0.5f, 25.0f, "%.1fm");
-                                        ImGui::TextColored(c::text::text, "Enlarges enemy body + head hitbox");
-                                        ImGui::TextUnformatted("Headshots automatic when near head");
+                                        ImGui::TextColored(c::text::text, "Radius around the enemy head (metres)");
+                                        custom::SliderFloat("Head Zone", &Config.ExtraMenu.TuneHitboxHeadBand, 0.0f, 1.0f, "%.2f");
+                                        ImGui::TextUnformatted("Shot inside the head zone = headshot");
+                                    }
+                                    custom::Checkbox("Headshot", &Config.ExtraMenu.Headshot);
+                                    if (Config.ExtraMenu.Headshot) {
+                                        custom::SliderFloat("Headshot Damage", &Config.ExtraMenu.HeadshotDamage, 1.0f, 10.0f, "%.1fx");
+                                        ImGui::TextColored(c::text::text, "Every shot reports the head hit group");
                                     }
                                     custom::Checkbox("No Recoil", &Config.ExtraMenu.Recoil);
                                     custom::Checkbox("No Spread", &Config.ExtraMenu.Spread);

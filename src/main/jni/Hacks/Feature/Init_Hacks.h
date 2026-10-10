@@ -226,11 +226,14 @@ sColorsESPBOT sColorsESPBOT{0};
         bool Switch;
         bool Flash;
         bool Hit;
+        // Radius in METRES around an enemy's head. A shot registers when the ray
+        // passes within this distance of a live enemy head, so the slider is the
+        // size of the enlarged head hitbox (variant-3 semantics).
         float HitboxScale = 3.0f;
-        // Hitbox rewrite (2026-10-09): body sphere + head sphere both scale with
-        // HitboxScale. A shot is "on target" when the ray passes within the body
-        // sphere or the head sphere of the enemy, so side shots that clip the body
-        // now register instead of only the horizontal root-cylinder check.
+        // Forces every shot's reported hit group to head and multiplies its
+        // damage by HeadshotDamage (the variant-3 "Headshot" feature).
+        bool Headshot = false;
+        float HeadshotDamage = 2.0f;
         bool Rpd;
         bool Parachute;
 		bool WallHack;
@@ -252,7 +255,7 @@ sColorsESPBOT sColorsESPBOT{0};
         bool RenameCardPickEnemy;                     // one-shot: next call grabs the highlighted enemy's name into the rename field
         bool ForbidKickOff;                            // true = suppress the "account logged in on another device" kick-off so you can solo accounts
         bool ForbidKickOffOnLogin;                      // one-shot: when true, activate ForbidKickOff on the next successful login then clear it
-        float TuneHitboxHeadBand = 0.35f;             // how far below the head still counts as a headshot (auto hit group)
+        float TuneHitboxHeadBand = 0.35f;             // inner fraction of the hitbox radius that auto-reports a headshot (0 = off)
         bool A_Fire;               // triggerbot / auto-fire: shoots the moment the aim / fire criteria is met
         int  A_FireTrigger = 0;    // when A_Fire fires: 0 = always, 1 = only if enemy flanks / is in front, 2 = only if no teammates near crosshair
         float A_FireDelay = 0.0f;  // min seconds between A_Fire shots; 0 = as fast as the game allows
