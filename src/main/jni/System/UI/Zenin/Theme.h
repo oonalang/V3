@@ -16,6 +16,7 @@
 #include "ImGui/imgui_internal.h"
 #include "ImGui/Call_ImGui.h"
 #include "Fonts/Iconcpp.h"
+#include "System/Core/UiLayout.h"
 
 #include <cmath>
 
@@ -405,15 +406,22 @@ inline DockResult DockBar(const ImVec2 &min, const ImVec2 &max, const char *wind
     return res;
 }
 
+static int g_zeninHubSel = 0; // cached hub selection (0..6) set at pick time
+
 // ---------------------------------------------------------------------------
-// HUB LAUNCHER — zenin-styled card: dark shell, dock icon rail, close card.
-// Returns 1..6 when the user taps a dock icon, 0 otherwise.
+// HUB LAUNCHER — the imgui-ref container boiled down into a draggable card:
+// red-topbar strip ("ZENIN | ETHNIR NOIR V3"), thin divider, a 150px sidebar
+// nav (icon + label rows, animated accent selection like the Lumin sidebar)
+// and a container area with the six tab cards. Drag position persists in
+// ui_layout.ini (RememberWheel slot, same as the old wheel).
 // ---------------------------------------------------------------------------
 inline int RenderZeninHub(const ImVec2 &defaultCenter)
 {
     const ImVec2 display = ImGui::GetIO().DisplaySize;
 
-    constexpr float hubW = 430.0f, hubH = 280.0f;
+    constexpr float hubW = 470.0f, hubH = 300.0f;
+    constexpr float sidebarW = 150.0f;
+    constexpr float topbarH = 52.0f;
 
     static ImVec2 hubPos(0, 0);
     static ImVec2 hubPosApplied(-99999, -99999);
@@ -422,7 +430,10 @@ inline int RenderZeninHub(const ImVec2 &defaultCenter)
     if (!hubInit)
     {
         hubInit = true;
-        hubPos = ImVec2(defaultCenter.x - hubW * 0.5f, defaultCenter.y - hubH * 0.5f);
+        const ui_layout::State &layout = ui_layout::Get();
+        hubPos = layout.hasWheel
+            ? ImVec2(layout.wheelX, layout.wheelY)
+            : ImVec2(defaultCenter.x - hubW * 0.5f, defaultCenter.y - hubH * 0.5f);
     }
     hubPos.x = Clampf(hubPos.x, 4.0f, Maxf(4.0f, display.x - hubW - 4.0f));
     hubPos.y = Clampf(hubPos.y, 4.0f, Maxf(4.0f, display.y - hubH - 4.0f));
@@ -446,10 +457,190 @@ inline int RenderZeninHub(const ImVec2 &defaultCenter)
         ImDrawList *dl = ImGui::GetWindowDrawList();
         const ImVec2 wp = ImGui::GetWindowPos();
 
-        ImGui::SetCursorPos(ImVec2(0, 0));
-        ImGui::InvisibleButton("##zenin_hub_hitbox", ImVec2(hubW, hubH));
-        const bool held = ImGui::IsItemActive();
-        if (held && !dragging && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 8.0f))
+        ImFont *titleFont = custom::shell::GetTitleFont();
+        ImFont *textFont  = custom::shell::GetTextFont();
+        ImFont *iconFont  = custom::shell::GetIconFont();
+
+        // ---- window shell (zenin card) ----
+        dl->AddRectFilled(wp, wp + ImVec2(hubW, hubH), T::WindowBg, T::RWindow);
+        dl->AddRect(wp, wp + ImVec2(hubW, hubH), IM_COL32(38, 38, 42, 230), T::RWindow, 0, 1.3f);
+        dl->AddRectFilled(wp, ImVec2(wp.x + hubW, wp.y + 3.0f), T::Accent, T::RWindow, ImDrawFlags_RoundCornersTop);
+
+        // ---- topbar strip: split-color title + thin red underline ----
+        {
+            const char *l1 = "ZENIN";
+            const char *l2 = " | ETHNIR NOIR V3";
+            const float ts = 19.0f;
+            const ImVec2 s1 = titleFont ? titleFont->CalcTextSizeA(ts, FLT_MAX, 0.0f, l1) : ImGui::CalcTextSize(l1);
+            if (titleFont)
+            {
+                dl->AddText(titleFont, ts, ImVec2(wp.x + 20.0f, wp.y + 14.0f), IM_COL32(235, 235, 236, 255), l1);
+                dl->AddText(titleFont, ts, ImVec2(wp.x + 20.0f + s1.x + 2.0f, wp.y + 14.0f), T::Accent, l2);
+            }
+            dl->AddLine(ImVec2(wp.x + 14.0f, wp.y + topbarH), ImVec2(wp.x + hubW - 14.0f, wp.y + topbarH),
+                        IM_COL32(100, 30, 32, 220), 1.6f);
+        }
+
+        // ---- sidebar nav (bg panel + rows) ----
+        static const char *const navIcons[6] = {
+            ICON_FA_PALETTE, ICON_FA_CROSSHAIRS, ICON_FA_MICROCHIP,
+            ICON_FA_SHIELD_ALT, ICON_FA_EYE, ICON_FA_COG
+        };
+        static const char *const navLabels[6] = {
+            "VISUAL", "COMBAT", "MEMORY", "SKINS", "MISC", "SETTINGS"
+        };
+
+        const float sideTop = topbarH + 10.0f;
+        const float sideBot = hubH - 34.0f;
+        const float sideMinX = wp.x + 12.0f;
+        const float sideMaxX = sideMinX + sidebarW;
+        dl->AddRectFilled(ImVec2(sideMinX, sideTop), ImVec2(sideMaxX, sideBot), T::SectionBg, 12.0f);
+
+        const float rowH = 33.0f;
+        const float rowGap = 3.0f;
+        const float rowsTop = sideTop + 8.0f;
+        static ImVec4 selRect(0, 0, 0, 0);       // animated accent selection (Lumin easing)
+        static bool   selValid = false;
+        float hoverRect[4] = {0, 0, 0, 0};
+
+        for (int i = 0; i < 6; ++i)
+        {
+            const float rx = sideMinX + 6.0f;
+            const float ry = rowsTop + i * (rowH + rowGap);
+            const ImVec2 rmin(rx, ry);
+            const ImVec2 rmax(rx + sidebarW - 12.0f, ry + rowH);
+            const bool active = (g_zeninHubSel == i + 1);
+
+            char rowId[48];
+            std::snprintf(rowId, sizeof(rowId), "##hubnav_%d", i);
+            ImGui::SetCursorScreenPos(rmin);
+            ImGui::PushID(rowId);
+            ImGui::InvisibleButton("##navrow", ImVec2(rmax.x - rmin.x, rowH));
+            const bool pressed = ImGui::IsItemClicked() && !dragging;
+            const bool hov = ImGui::IsItemHovered();
+            ImGui::PopID();
+
+            if (hov && !dragging) { hoverRect[0]=rmin.x; hoverRect[1]=rmin.y; hoverRect[2]=rmax.x; hoverRect[3]=rmax.y; }
+            if (hov && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 10.0f))
+                dragging = true;
+
+            if (active && !selValid)
+            {
+                selRect = ImVec4(rmin.x, rmin.y, rmax.x, rmax.y);
+                selValid = true;
+            }
+            else if (active)
+            {
+                const float e = ImClamp(ImGui::GetIO().DeltaTime * 14.0f, 0.0f, 1.0f);
+                selRect.x += (rmin.x - selRect.x) * e;
+                selRect.y += (rmin.y - selRect.y) * e;
+                selRect.z += (rmax.x - selRect.z) * e;
+                selRect.w += (rmax.y - selRect.w) * e;
+            }
+
+            if (active)
+            {
+                dl->AddRectFilled(ImVec2(selRect.x, selRect.y), ImVec2(selRect.z, selRect.w), T::AccentSoft, 9.0f);
+                // left accent bar inside the row
+                dl->AddRectFilled(ImVec2(selRect.x + 2.0f, selRect.y + 4.0f),
+                                  ImVec2(selRect.x + 4.0f, selRect.w - 4.0f), T::Accent, 1.0f);
+            }
+            else if (hov)
+            {
+                dl->AddRectFilled(rmin, rmax, IM_COL32(32, 32, 36, 160), 9.0f);
+            }
+
+            // icon
+            if (iconFont)
+            {
+                const ImVec2 isz = iconFont->CalcTextSizeA(15.0f, FLT_MAX, 0.0f, navIcons[i]);
+                dl->AddText(iconFont, 15.0f,
+                            ImVec2(rmin.x + 10.0f, rmin.y + (rowH - isz.y) * 0.5f),
+                            active ? T::Accent : T::IconDim, navIcons[i]);
+            }
+            // label
+            if (textFont)
+            {
+                dl->AddText(textFont, 12.5f, ImVec2(rmin.x + 32.0f, rmin.y + (rowH - 15.0f) * 0.5f),
+                            active ? T::Text : T::TextMut, navLabels[i]);
+            }
+
+            if (pressed)
+                picked = i + 1;
+        }
+
+        // ---- container area (right of sidebar) ----
+        const float contMinX = sideMaxX + 10.0f;
+        const float contMinY = sideTop;
+        const float contMaxX = wp.x + hubW - 12.0f;
+        const float contMaxY = sideBot;
+        dl->AddRectFilled(ImVec2(contMinX, contMinY), ImVec2(contMaxX, contMaxY), IM_COL32(10, 10, 12, 255), 12.0f);
+
+        if (textFont)
+        {
+            const char *cap = "TAP A TAB TO OPEN";
+            dl->AddText(textFont, 11.0f, ImVec2(contMinX + 12.0f, contMinY + 8.0f), T::TextMut, cap);
+        }
+
+        // 2x3 tab card grid
+        {
+            const float gx = contMinX + 10.0f, gy = contMinY + 26.0f;
+            const float cw = (contMaxX - contMinX - 30.0f) * 0.5f;
+            const float ch = (contMaxY - gy - 18.0f) * 0.5f - 4.0f;
+            const float gapX = 10.0f, gapY = 8.0f;
+            for (int i = 0; i < 6; ++i)
+            {
+                const float cx = gx + (i % 2) * (cw + gapX);
+                const float cy = gy + (i / 2) * (ch + gapY);
+                const ImVec2 cmin(cx, cy), cmax(cx + cw, cy + ch);
+                const bool active = (g_zeninHubSel == i + 1);
+
+                char cid[40];
+                std::snprintf(cid, sizeof(cid), "##hubcard_%d", i);
+                ImGui::SetCursorScreenPos(cmin);
+                ImGui::PushID(cid);
+                ImGui::InvisibleButton("##card", ImVec2(cw, ch));
+                const bool pressed = ImGui::IsItemClicked() && !dragging;
+                const bool hov = ImGui::IsItemHovered();
+                ImGui::PopID();
+
+                if (hov && ImGui::IsMouseDragging(ImGuiMouseButton_Left, 10.0f))
+                    dragging = true;
+
+                dl->AddRectFilled(cmin, cmax, active ? T::SectionBg : IM_COL32(24, 24, 26, 200), 10.0f);
+                if (active) dl->AddRect(cmin, cmax, T::Accent, 10.0f, 0, 1.2f);
+                else if (hov) dl->AddRect(cmin, cmax, IM_COL32(70, 70, 76, 200), 10.0f, 0, 1.0f);
+
+                if (iconFont)
+                {
+                    const ImVec2 isz = iconFont->CalcTextSizeA(20.0f, FLT_MAX, 0.0f, navIcons[i]);
+                    dl->AddText(iconFont, 20.0f,
+                                ImVec2(cmin.x + (cw - isz.x) * 0.5f, cmin.y + 8.0f),
+                                active ? T::Accent : T::IconDim, navIcons[i]);
+                }
+                if (textFont)
+                {
+                    dl->AddText(textFont, 10.5f,
+                                ImVec2(cmin.x + (cw - 44.0f) * 0.5f, cmax.y - 22.0f),
+                                active ? T::Text : T::TextMut, navLabels[i]);
+                }
+                if (pressed)
+                    picked = i + 1;
+            }
+        }
+
+        // ---- footer hint ----
+        if (textFont)
+        {
+            const char *hint = "DRAG THE CARD TO MOVE";
+            const ImVec2 hsz = textFont->CalcTextSizeA(11.0f, FLT_MAX, 0.0f, hint);
+            dl->AddText(textFont, 11.0f, ImVec2(wp.x + (hubW - hsz.x) * 0.5f, wp.y + hubH - 24.0f), T::TextMut, hint);
+        }
+
+        // ---- drag handling (whole card, ignores interactive rows) ----
+        if (!dragging && ImGui::IsWindowHovered() &&
+            ImGui::IsMouseDragging(ImGuiMouseButton_Left, 10.0f) &&
+            !ImGui::IsAnyItemHovered())
             dragging = true;
         if (dragging && ImGui::IsMouseDown(ImGuiMouseButton_Left))
         {
@@ -459,84 +650,12 @@ inline int RenderZeninHub(const ImVec2 &defaultCenter)
             hubPosApplied = hubPos;
         }
         if (!ImGui::IsMouseDown(ImGuiMouseButton_Left) && dragging)
+        {
+            ui_layout::RememberWheel(hubPos.x, hubPos.y);
             dragging = false;
-
-        // window shell
-        dl->AddRectFilled(wp, wp + ImVec2(hubW, hubH), T::WindowBg, T::RWindow);
-        dl->AddRect(wp, wp + ImVec2(hubW, hubH), IM_COL32(38, 38, 42, 230), T::RWindow, 0, 1.3f);
-        // top accent bar
-        dl->AddRectFilled(wp, ImVec2(wp.x + hubW, wp.y + 3.0f), T::Accent, T::RWindow, ImDrawFlags_RoundCornersTop);
-
-        // header text — left aligned like the reference ("zenin | ...")
-        ImFont *titleFont = custom::shell::GetTitleFont();
-        const char *l1 = "ZENIN";
-        const char *l2 = " | ETHNIR NOIR V3";
-        const ImVec2 s1 = titleFont ? titleFont->CalcTextSizeA(20.0f, FLT_MAX, 0.0f, l1) : ImGui::CalcTextSize(l1);
-        if (titleFont) {
-            dl->AddText(titleFont, 20.0f, ImVec2(wp.x + 22.0f, wp.y + 16.0f), T::Accent, l1);
-            dl->AddText(titleFont, 20.0f, ImVec2(wp.x + 22.0f + s1.x, wp.y + 16.0f), T::Text, l2);
-        }
-        dl->AddLine(ImVec2(wp.x + 16.0f, wp.y + 52.0f), ImVec2(wp.x + hubW - 16.0f, wp.y + 52.0f), IM_COL32(100, 30, 32, 220), 2.0f);
-
-        // caption under the title
-        const char *sub = "TAP A TAB TO OPEN";
-        ImFont *textFont = custom::shell::GetTextFont();
-        if (textFont) {
-            const ImVec2 ssz = textFont->CalcTextSizeA(15.0f, FLT_MAX, 0.0f, sub);
-            dl->AddText(textFont, 15.0f, ImVec2(wp.x + 22.0f, wp.y + 62.0f), T::TextMut, sub);
-        }
-
-        // dock bar centred in the remaining area
-        static const char *const hubIcons[6] = {
-            ICON_FA_PALETTE, ICON_FA_CROSSHAIRS, ICON_FA_MICROCHIP,
-            ICON_FA_SHIELD_ALT, ICON_FA_EYE, ICON_FA_COG
-        };
-        static const char *const hubLabels[6] = {
-            "VISUAL", "COMBAT", "MEMORY", "SKINS", "MISC", "SETTINGS"
-        };
-
-        const ImVec2 dockMin(wp.x + 16.0f, wp.y + 96.0f);
-        const ImVec2 dockMax(wp.x + hubW - 16.0f, wp.y + hubH - 66.0f);
-        DockResult dres = DockBar(dockMin, dockMax, "##zenin_hub", hubIcons, 6, 0, false, custom::shell::GetIconFont());
-        if (dres.pickedTab >= 1 && dres.pickedTab <= 6 && !dragging)
-        {
-            picked = dres.pickedTab;
-        }
-        if (dres.toggleDark)
-        {
-            // Reference behaviour: moon tends the look — here it's a no-op hint.
-        }
-
-        // tab labels under the dock icons
-        {
-            const float iconBtn = 46.0f;
-            const float gap = 10.0f;
-            const float totalW = iconBtn * 6.0f + gap * 5.0f;
-            const float startX = dockMin.x + ((dockMax.x - dockMin.x) - totalW) * 0.5f;
-            ImFont *f = custom::shell::GetTextFont();
-            const float rowY = dockMax.y + 8.0f;
-            if (f)
-            {
-                for (int i = 0; i < 6; ++i)
-                {
-                    const ImVec2 ts = f->CalcTextSizeA(13.0f, FLT_MAX, 0.0f, hubLabels[i]);
-                    const float cx = startX + i * (iconBtn + gap) + iconBtn * 0.5f;
-                    dl->AddText(f, 13.0f, ImVec2(cx - ts.x * 0.5f, rowY), T::TextMut, hubLabels[i]);
-                }
-            }
-        }
-
-        // footer hint
-        const char *hint = "DRAG THE CARD TO MOVE - TAP A TAB TO OPEN";
-        ImFont *f = custom::shell::GetTextFont();
-        if (f)
-        {
-            const ImVec2 hsz = f->CalcTextSizeA(14.0f, FLT_MAX, 0.0f, hint);
-            dl->AddText(f, 14.0f, ImVec2(wp.x + (hubW - hsz.x) * 0.5f, wp.y + hubH - 26.0f), T::TextMut, hint);
         }
     }
     ImGui::End();
     return picked;
 }
-
 } // namespace zenin

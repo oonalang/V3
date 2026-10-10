@@ -1038,6 +1038,18 @@ static std::mutex  g_loginMutex;
 static float g_loginStart = 0.0f;
 static bool g_loginInFlight = false;
 
+// Lumin-style failure feedback: the whole card accent turns red for a moment
+// and the Activate button shakes horizontally, decaying over 0.8s.
+static bool g_licenseInvalid = false;
+static float g_licenseInvalidTimer = 0.0f;
+static std::string g_licenseErrorMsg;
+static void LuminFlagInvalid(const char* msg)
+{
+    g_licenseInvalid = true;
+    g_licenseInvalidTimer = 0.0f;
+    g_licenseErrorMsg = msg ? msg : "";
+}
+
 static bool g_ShowRadialMenu = true;
 static void SaveLoginTextForAttempt(const char* text) {
     strncpy(logintext, text, sizeof(logintext) - 1);
@@ -1845,25 +1857,36 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                 // rounded shield badge + single-tone wordmark. Same layout slots
                 // as before so every handler below keeps working.
                 {
-                    draw->AddRectFilled(pos, pos + login_size, zenin::T::WindowBg, zenin::T::RWindow);
-                    draw->AddRect(pos, pos + login_size, IM_COL32(36, 36, 40, 220), zenin::T::RWindow, 0, 1.3f);
-                    draw->AddRectFilled(pos, ImVec2(pos.x + 3.0f, pos.y + login_size.y), zenin::T::Accent, zenin::T::RWindow, ImDrawFlags_RoundCornersLeft);
+                    // Lumin-style shell: child-fill panel + soft accent glow
+                    // behind the brand mark, no left edge bar, glass border.
+                    draw->AddRectFilled(pos, pos + login_size, zenin::T::WindowBg, 12.0f);
+                    draw->AddRect(pos, pos + ImVec2(0.5f, 0.5f) + (login_size - ImVec2(0.5f, 0.5f)), IM_COL32(46, 46, 52, 150), 12.0f, 0, 1.0f);
 
-                    ImFont* titleFont = custom::shell::GetTitleFont();
+                    // brand header: accent mark (rounded square w/ glow ring)
+                    // on the left, name + subtitle on the right — Lumin look.
+                    const float markX = pos.x + 26.0f;
+                    const float markY = pos.y + 22.0f;
+                    const float markS = 40.0f;
+                    draw->AddCircleFilled(ImVec2(markX + markS * 0.5f, markY + markS * 0.5f), markS * 0.68f,
+                                          IM_COL32(255, 90, 92, 34), 48);
+                    draw->AddRectFilled(ImVec2(markX, markY), ImVec2(markX + markS, markY + markS), IM_COL32(30, 30, 34, 255), 8.0f);
+                    draw->AddRectFilled(ImVec2(markX + 3, markY + 3), ImVec2(markX + markS - 3, markY + markS - 3), IM_COL32(255, 90, 92, 28), 7.0f);
+
                     ImFont* iconFont  = custom::shell::GetIconFont();
-
-                    const ImVec2 logoC(pos.x + login_size.x * 0.5f, pos.y + 58.0f);
-                    draw->AddCircleFilled(logoC, 36.0f, IM_COL32(26, 26, 29, 255), 48);
-                    draw->AddCircle(logoC, 36.0f, zenin::T::Accent, 48, 2.2f);
                     if (iconFont) {
-                        const ImVec2 isz = custom::shell::MeasureText(iconFont, 26.0f, ICON_FA_SHIELD_ALT);
-                        draw->AddText(iconFont, 26.0f, ImVec2(logoC.x - isz.x * 0.5f, logoC.y - isz.y * 0.5f), zenin::T::Accent, ICON_FA_SHIELD_ALT);
+                        const ImVec2 isz = custom::shell::MeasureText(iconFont, 19.0f, ICON_FA_KEY);
+                        draw->AddText(iconFont, 19.0f,
+                                      ImVec2(markX + (markS - isz.x) * 0.5f, markY + (markS - isz.y) * 0.5f),
+                                      zenin::T::Accent, ICON_FA_KEY);
                     }
 
-                    const char* sub = "SIGN IN WITH YOUR LICENSE KEY";
-                    ImFont* textFont = font::inter_semibold ? font::inter_semibold : ImGui::GetFont();
-                    const ImVec2 ssz = textFont ? textFont->CalcTextSizeA(15.0f, FLT_MAX, 0.0f, sub) : ImGui::CalcTextSize(sub);
-                    draw->AddText(textFont, 15.0f, ImVec2(pos.x + (login_size.x - ssz.x) * 0.5f, pos.y + 108.0f), zenin::T::TextMut, sub);
+                    ImFont* titleFont = custom::shell::GetTitleFont();
+                    const char* name = "ZENIN";
+                    const char* sub  = "License access";
+                    if (titleFont) {
+                        draw->AddText(titleFont, 19.0f, ImVec2(markX + markS + 12.0f, markY + 4.0f), zenin::T::Text, name);
+                        draw->AddText(titleFont, 12.0f, ImVec2(markX + markS + 12.0f, markY + 27.0f), zenin::T::TextMut, sub);
+                    }
                 }
 
                 // All interactive rows below the chrome (logo block ends at y=166).
@@ -1950,12 +1973,48 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                     s[sizeof(s) - 1] = '\0';
                 }
 
-                if (drawLoginButton("LOG IN", 360.0f, 480.0f)) {
-                    // Prevent re-triggering while a login is already in flight, and
-                    // keep the field editable so the user can change the key if they
-                    // mistype it before the request finishes.
-                    if (!g_loginInFlight && s[0] != '\0') {
-                        StartLoginAttempt(s);
+                // Lumin primary button: accent-filled slab, soft glow shadow,
+                // decaying shake while invalid, label centred in black.
+                {
+                    const float btnY = 360.0f, btnW = 480.0f, btnH = 50.0f;
+                    const float shake = g_licenseInvalid
+                        ? std::sin(g_licenseInvalidTimer * 48.0f) * 5.0f *
+                          (1.0f - ImClamp(g_licenseInvalidTimer / 0.8f, 0.0f, 1.0f))
+                        : 0.0f;
+                    const float btnX = (login_size.x - btnW) * 0.5f;
+                    ImGui::SetCursorPos(ImVec2(btnX, btnY));
+                    if (F50) ImGui::PushFont(F50);
+                    const bool pressed = ImGui::InvisibleButton("##login_activate", ImVec2(btnW, btnH));
+                    const bool hovered = ImGui::IsItemHovered();
+                    ImFont* labelFont = ImGui::GetFont();
+                    const float labelSize = ImGui::GetFontSize();
+                    if (F50) ImGui::PopFont();
+
+                    const ImVec2 bmin = ImGui::GetItemRectMin();
+                    const ImVec2 bmax = ImGui::GetItemRectMax();
+
+                    // soft accent glow under the button
+                    draw->AddRectFilled(bmin + ImVec2(8, 8), bmax - ImVec2(-8, 0), IM_COL32(255, 90, 92, 40), 18.0f);
+                    // accent slab (dimmer while in-flight so it reads disabled-ish)
+                    const ImU32 slab = g_loginInFlight ? IM_COL32(214, 76, 78, 255) : zenin::T::Accent;
+                    draw->AddRectFilled(bmin, bmax, slab, 11.0f);
+
+                    const char* label = g_licenseErrorMsg.empty() ? "ACTIVATE" : g_licenseErrorMsg.c_str();
+                    const float labelSizeUse = labelSize > 0.0f ? labelSize : 16.0f;
+                    const ImVec2 lt = labelFont ? labelFont->CalcTextSizeA(labelSizeUse, FLT_MAX, 0.0f, label) : ImGui::CalcTextSize(label);
+                    const ImVec2 lpos((bmin.x + bmax.x - lt.x) * 0.5f + shake, (bmin.y + bmax.y - lt.y) * 0.5f);
+                    if (labelFont) draw->AddText(labelFont, labelSizeUse, lpos, IM_COL32(20, 16, 16, 255), label);
+
+                    if (pressed) {
+                        if (g_loginInFlight) {
+                            // already verifying; ignore re-trigger
+                        } else if (s[0] == '\0') {
+                            LuminFlagInvalid("License key required");
+                        } else {
+                            g_licenseInvalid = false;
+                            g_licenseErrorMsg.clear();
+                            StartLoginAttempt(s);
+                        }
                     }
                 }
 
@@ -2003,16 +2062,32 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                     }
                 }
 
-                if (!err.empty() && err != "OK") {
-                    // The window is only 460px tall: the old y=458 placement left
-                    // ~2px of the message visible, so failed logins looked like the
-                    // menu simply never opened. Draw it in the status area instead.
-                    ImGui::SetCursorPos(ImVec2(30, 416.0f));
-                    ImGui::PushTextWrapPos(610.0f);
-                    ImGui::TextColored(ImColor(255, 90, 90, 255), "Error: %s", err.c_str());
-                    ImGui::TextColored(ImVec4(0.56f, 0.56f, 0.62f, 1.0f),
-                                       "Press LOG IN to try again.");
-                    ImGui::PopTextWrapPos();
+                // Lumin status line: accent key icon + red message just under
+                // the Activate button, inside the card.
+                {
+                    std::string statusMsg = err;
+                    if (err.empty() && !g_licenseErrorMsg.empty())
+                        statusMsg = g_licenseErrorMsg;
+                    if (!statusMsg.empty() && statusMsg != "OK") {
+                        const float rowY = 418.0f;
+                        const float rowX = (login_size.x - 480.0f) * 0.5f;
+                        draw->AddCircleFilled(ImVec2(rowX + 8.0f, rowY + 12.0f), 5.0f, zenin::T::Accent, 24);
+                        draw->AddLine(ImVec2(rowX + 8.0f, rowY + 12.0f), ImVec2(rowX + 18.0f, rowY + 12.0f), zenin::T::Accent, 1.4f);
+                        draw->AddLine(ImVec2(rowX + 13.0f, rowY + 12.0f), ImVec2(rowX + 13.0f, rowY + 16.0f), zenin::T::Accent, 1.4f);
+                        const std::string msg = "Error: " + statusMsg;
+                        ImFont* tf = font::inter_semibold ? font::inter_semibold : ImGui::GetFont();
+                        draw->AddText(tf, 14.0f, ImVec2(rowX + 26.0f, rowY + 4.0f), IM_COL32(255, 120, 122, 255), msg.c_str());
+                    }
+                }
+
+                // Advance the invalid-shake decay timer (Lumin license_invalid).
+                if (g_licenseInvalid) {
+                    g_licenseInvalidTimer += ImGui::GetIO().DeltaTime;
+                    if (g_licenseInvalidTimer >= 0.8f) {
+                        g_licenseInvalid = false;
+                        g_licenseInvalidTimer = 0.0f;
+                        g_licenseErrorMsg.clear();
+                    }
                 }
 
                 if (showKeyboard) RenderVirtualKeyboard("##VirtualKeyboardLogin", s, sizeof(s), &showKeyboard);
@@ -2035,6 +2110,7 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                 if (picked >= 1 && picked <= 6) {
                     page = picked;
                     activeTab = picked;
+                    zenin::g_zeninHubSel = picked;
                     g_ShowRadialMenu = false;
                 }
             }
@@ -2100,7 +2176,7 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                         runtimeDrawList->AddRectFilled(runtimeWindowPos,
                             ImVec2(runtimeWindowPos.x + runtimeWindowSize.x, runtimeWindowPos.y + 3.0f),
                             zenin::T::Accent, zenin::T::RWindow, ImDrawFlags_RoundCornersTop);
-                        runtimeDrawList->AddRectFilledMultiColor(runtimeWindowPos, ImVec2(runtimeWindowPos.x + runtimeWindowSize.x, runtimeWindowPos.y + 120.0f), IM_COL32(26, 26, 34, 200), IM_COL32(26, 26, 34, 0), IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0));
+runtimeDrawList->AddRectFilledMultiColor(runtimeWindowPos, ImVec2(runtimeWindowPos.x + runtimeWindowSize.x, runtimeWindowPos.y + 110.0f), IM_COL32(24, 24, 26, 210), IM_COL32(24, 24, 26, 0), IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0));
 
                         const float outerPad = 14.0f;
                         const float layoutGap = 8.0f;
@@ -2147,15 +2223,15 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
 
                         ImFont *runtimeTitleFont = custom::shell::GetTitleFont();
                         const float runtimeTitleSize = 22.0f;
-                        const char *titleA = "ethnir noir";
-                        const char *titleB = " | container v3";
+                        const char *titleA = "zenin";
+                        const char *titleB = " | ethnir noir v3";
                         const ImVec2 titleASize = runtimeTitleFont->CalcTextSizeA(runtimeTitleSize, FLT_MAX, 0.0f, titleA);
                         runtimeDrawList->AddText(runtimeTitleFont, runtimeTitleSize, ImVec2(headerMin.x + 56.0f, headerMin.y + 11.0f), IM_COL32(235, 235, 235, 255), titleA);
                         runtimeDrawList->AddText(runtimeTitleFont, runtimeTitleSize, ImVec2(headerMin.x + 56.0f + titleASize.x, headerMin.y + 11.0f), main_runtime_theme::GetAccentU32(), titleB);
 
                         static const char* catNames[] = { "VISUAL", "COMBAT", "MEMORY", "SKINS", "MISC", "SETTINGS" };
                         char currentCat[64];
-                        snprintf(currentCat, sizeof(currentCat), "Current: %s", catNames[runtimeState.activeTab - 1]);
+                        snprintf(currentCat, sizeof(currentCat), "current: %s", catNames[runtimeState.activeTab - 1]);
                         const ImVec2 subtitlePos(headerMin.x + 57.0f, headerMin.y + 38.0f);
                         runtimeDrawList->AddText(runtimeTitleFont, 10.0f, subtitlePos, IM_COL32(142, 142, 148, 235), currentCat);
 
