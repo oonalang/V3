@@ -1,5 +1,6 @@
 #include "Includes/Logger.h"
 #include "Includes/Macros.h"
+#include "Includes/SafePatch.h"   // SafeModeEnabled + verified patch/hook targets
 #include "Includes/obfuscate.h"
 #include "Includes/Utils.h"
 #include "ImGui/Call_ImGui.h"
@@ -1816,7 +1817,14 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
             (void *) icomoon_page, sizeof(icomoon_page), 20.0f, &ref_cfg);
 
         F107 = io.Fonts->AddFontFromMemoryCompressedTTF((void*)font_awesome_data1, (int)font_awesome_size1, 25.0f, &iconsConfig, icons_ranges);
-        F50 = io.Fonts->AddFontFromMemoryTTF((void *)F50_data, F50_size, 30.0f, NULL, io.Fonts->GetGlyphRangesDefault());
+        // FontDataOwnedByAtlas must stay false: F50_data is a static array in this
+        // library's image, not heap memory, and ImGui's default config asks the
+        // atlas to free() it -- which aborts on Android's allocator.
+        ImFontConfig f50_config;
+        f50_config.MergeMode = false;
+        f50_config.PixelSnapH = true;
+        f50_config.FontDataOwnedByAtlas = false;
+        F50 = io.Fonts->AddFontFromMemoryTTF((void *)F50_data, F50_size, 30.0f, &f50_config, io.Fonts->GetGlyphRangesDefault());
         if (!F107) F107 = font::inter_semibold;
         // Reference typography everywhere: every widget that draws with the
         // current font (custom_widgets.cpp) now renders in Inter Medium 14.5f,
@@ -1824,6 +1832,15 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
         if (font::inter_medium_widget) io.FontDefault = font::inter_medium_widget;
         else if (font::inter_semibold) io.FontDefault = font::inter_semibold;
         io.Fonts->Build();
+        // A face that failed to build leaves Fonts empty, and ImGui then resolves
+        // the default font out of an empty vector -- a null dereference on the
+        // first text draw. Never let that state exist.
+        if (io.Fonts->Fonts.Size <= 0) {
+            LOGW("imgui: no font face survived -- falling back to the built-in font");
+            io.Fonts->AddFontDefault();
+        }
+        if (io.FontDefault == nullptr && io.Fonts->Fonts.Size > 0)
+            io.FontDefault = io.Fonts->Fonts[0];
         ImGui_ImplOpenGL3_CreateFontsTexture();
         // Font atlas size is logged because an oversized atlas is cheap to spot
         // here and very hard to guess from a crash.
@@ -1865,6 +1882,23 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
     io->DisplaySize = ImVec2((float)g_GlWidth, (float)g_GlHeight);
     ImGui_ImplOpenGL3_NewFrame();
     ImGui::NewFrame();
+
+    // Breadcrumbs for the first frames. A crash while the overlay is starting up
+    // leaves no other trace, so the frame number (and whether the overlay got as
+    // far as drawing) is the one thing that separates "our UI code died" from
+    // "the game died under us". After the first few frames this goes quiet.
+    static int s_overlayFrame = 0;
+    ++s_overlayFrame;
+    if (s_overlayFrame <= 5)
+        LOGI("overlay frame %d: NewFrame ok", s_overlayFrame);
+
+    if (SafeModeEnabled()) {
+        ImDrawList *safeBanner = ImGui::GetForegroundDrawList();
+        safeBanner->AddRectFilled(ImVec2(8.0f, 8.0f), ImVec2(8.0f + 470.0f, 34.0f),
+                                  IM_COL32(20, 20, 24, 210), 6.0f);
+        safeBanner->AddText(ImVec2(16.0f, 14.0f), IM_COL32(255, 190, 80, 255),
+                            "SAFE MODE: no game hooks, no patches (marker file present)");
+    }
 
     // Anti Leak: deferred to the game thread (never run from the JNI login
     // callback) so the il2cpp field write can never take the process down.
@@ -2968,7 +3002,7 @@ runtimeDrawList->AddRectFilledMultiColor(runtimeWindowPos, ImVec2(runtimeWindowP
                         runtime_preview_menu::DrawPopupBackdropFocusLayer(ImGui::GetForegroundDrawList());
                     }
 
-                    if (Config.ExtraMenu.WallHack) Patches.A1.Modify();
+                    if (Config.ExtraMenu.WallHack) SafeModify(Patches.A1, "wallhack A1");
                     else Patches.A1.Restore();
 
                     static bool noCrouchPatched = false;
@@ -2976,9 +3010,9 @@ runtimeDrawList->AddRectFilledMultiColor(runtimeWindowPos, ImVec2(runtimeWindowP
                     {
                         if (Config.ExtraMenu.NoCrouch)
                         {
-                            Patches.NoCrouch.Modify();
-                            Patches.NoCrouchPawn.Modify();
-                            Patches.NoCrouchPlayerPawn.Modify();
+                            SafeModify(Patches.NoCrouch, "no crouch");
+                            SafeModify(Patches.NoCrouchPawn, "no crouch pawn");
+                            SafeModify(Patches.NoCrouchPlayerPawn, "no crouch player pawn");
                         }
                         else
                         {
@@ -3049,6 +3083,10 @@ runtimeDrawList->AddRectFilledMultiColor(runtimeWindowPos, ImVec2(runtimeWindowP
     ApplyWorldVisualsRuntime();
     InstallBRClassEspConfigHook();
 
+    if (s_overlayFrame <= 5)
+        LOGI("overlay frame %d: content drawn (menu=%d, login=%d)",
+             s_overlayFrame, isMenuVisible ? 1 : 0, isLogin ? 1 : 0);
+
     ImGui::EndFrame();
     ImGui::Render();
 
@@ -3062,6 +3100,9 @@ runtimeDrawList->AddRectFilledMultiColor(runtimeWindowPos, ImVec2(runtimeWindowP
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     }
 
+    if (s_overlayFrame <= 5)
+        LOGI("overlay frame %d: presented", s_overlayFrame);
+
     return old_eglSwapBuffers(dpy, surface);
 }
 
@@ -3073,6 +3114,7 @@ size_t hook_strlen(const char *thread)
 
 void Init_Thread2()
 {
+    LOGI("boot: Init_Thread2 started (protection)");
     InitializeProtection();
 }
 
@@ -3080,6 +3122,7 @@ void Init_SwapHook() { }
 
 void Init_Thread()
 {
+    LOGI("boot: Init_Thread started (hooks + patches)");
     while (!m_unity)
     {
         m_unity = Tools::GetBaseAddress("libunity.so");
@@ -3095,33 +3138,39 @@ void Init_Thread()
         LOGI("boot: offsets resolved (%s)", diag);
     }
 
-    Patches.A1 = MemoryPatch::createWithHex("libunity.so", 0x8D781DC, "1F 20 03 D5 E0 03 13 AA");
-    Patches.NoCrouch = MemoryPatch::createWithHex("libunity.so",0x511F50C,"00 00 80 D2 C0 03 5F D6");
-    Patches.NoCrouchPawn = MemoryPatch::createWithHex("libunity.so",0x524D15C,"00 00 80 D2 C0 03 5F D6");
-    Patches.NoCrouchPlayerPawn = MemoryPatch::createWithHex("libunity.so",0x54B6820,"00 00 80 D2 C0 03 5F D6");
-    Patches.NoWingsuit = MemoryPatch::createWithHex("libunity.so",0x54A12F4,"00 00 80 D2 C0 03 5F D6");
+    // Each of these used to be built blindly: MemoryPatch's constructor reads the
+    // bytes it is about to replace, so an RVA that does not belong to this build
+    // is a crash on its own, and a later Modify() writes into whatever is there.
+    // SafeBuildPatch proves the target first and hands back an invalid patch when
+    // it cannot (features then simply stay inert, logged).
+    if (SafeModeEnabled()) {
+        LOGI("boot: safe mode -- all game hooks and patches disabled");
+    } else {
+        Patches.A1 = SafeBuildPatch("libunity.so", 0x8D781DC, "1F 20 03 D5 E0 03 13 AA", "wallhack A1");
+        Patches.NoCrouch = SafeBuildPatch("libunity.so", 0x511F50C, "00 00 80 D2 C0 03 5F D6", "no crouch");
+        Patches.NoCrouchPawn = SafeBuildPatch("libunity.so", 0x524D15C, "00 00 80 D2 C0 03 5F D6", "no crouch pawn");
+        Patches.NoCrouchPlayerPawn = SafeBuildPatch("libunity.so", 0x54B6820, "00 00 80 D2 C0 03 5F D6", "no crouch player pawn");
+        Patches.NoWingsuit = SafeBuildPatch("libunity.so", 0x54A12F4, "00 00 80 D2 C0 03 5F D6", "no wingsuit");
+    }
 
-    DobbyHook((void *)getAbsoluteAddress("libunity.so", 0xC9B6F90), (void *)&WeaponFireComponent_Instant_CreateBulletLine, (void **)&oWeaponFireComponent_Instant_CreateBulletLine);
-    DobbyHook((void *)getAbsoluteAddress("libunity.so", 0xC9C33A4), (void *)&WeaponFireComponent_Instant_CreateBulletProjectile, (void **)&oWeaponFireComponent_Instant_CreateBulletProjectile);
+    SafeDobbyHook("libunity.so", 0xC9B6F90, (void *)&WeaponFireComponent_Instant_CreateBulletLine, (void **)&oWeaponFireComponent_Instant_CreateBulletLine, "CreateBulletLine");
+    SafeDobbyHook("libunity.so", 0xC9C33A4, (void *)&WeaponFireComponent_Instant_CreateBulletProjectile, (void **)&oWeaponFireComponent_Instant_CreateBulletProjectile, "CreateBulletProjectile");
     InstallBRClassEspConfigHook();
     LOGI("boot: installing game hooks");
     InitializeAllHooks();
     LOGI("boot: game hooks installed");
 
-MemoryPatch::createWithHex("libanogs.so", 0x204218, "00 00 80 D2 C0 03 5F D6").Modify();
-MemoryPatch::createWithHex("libanogs.so", 0x20A39C, "00 00 80 D2 C0 03 5F D6").Modify();
-MemoryPatch::createWithHex("libanogs.so", 0x20AE78, "00 00 80 D2 C0 03 5F D6").Modify();
-MemoryPatch::createWithHex("libanogs.so", 0x25FA98, "00 00 80 D2 C0 03 5F D6").Modify();
-MemoryPatch::createWithHex("libanogs.so", 0x2AA880, "00 00 80 D2 C0 03 5F D6").Modify();
-MemoryPatch::createWithHex("libanogs.so", 0x2B63E4, "00 00 80 D2 C0 03 5F D6").Modify();
-MemoryPatch::createWithHex("libanogs.so", 0x36F0AC, "00 00 80 D2 C0 03 5F D6").Modify();
-MemoryPatch::createWithHex("libanogs.so", 0x334310, "00 00 80 D2 C0 03 5F D6").Modify();
-MemoryPatch::createWithHex("libanogs.so", 0x39AE94, "00 00 80 D2 C0 03 5F D6").Modify();
-MemoryPatch::createWithHex("libanogs.so", 0x44BC90, "00 00 80 D2 C0 03 5F D6").Modify();
-MemoryPatch::createWithHex("libanogs.so", 0x491EDC, "00 00 80 D2 C0 03 5F D6").Modify();
-MemoryPatch::createWithHex("libanogs.so", 0x497E64, "00 00 80 D2 C0 03 5F D6").Modify();
-MemoryPatch::createWithHex("libanogs.so", 0x4B68A0, "00 00 80 D2 C0 03 5F D6").Modify();
-MemoryPatch::createWithHex("libanogs.so", 0x4B9C10, "00 00 80 D2 C0 03 5F D6").Modify();
+    // Protection-library stubs. Verified + logged; in safe mode none are applied.
+    {
+        static const uintptr_t kProtectionRvAs[] = {
+            0x204218, 0x20A39C, 0x20AE78, 0x25FA98, 0x2AA880, 0x2B63E4, 0x36F0AC, 0x334310, 0x39AE94, 0x44BC90, 0x491EDC, 0x497E64, 0x4B68A0, 0x4B9C10
+        };
+        int applied = 0;
+        for (uintptr_t rva : kProtectionRvAs)
+            if (SafePatchHex("libanogs.so", rva, "00 00 80 D2 C0 03 5F D6", "protection stub"))
+                ++applied;
+        LOGI("boot: protection stubs %d/%d applied", applied, (int)(sizeof(kProtectionRvAs) / sizeof(kProtectionRvAs[0])));
+    }
 
     LOGI("boot: hooking eglSwapBuffers");
     auto swapBuffers = ((uintptr_t)DobbySymbolResolver(OBFUSCATE("libunity.so"), OBFUSCATE("eglSwapBuffers")));

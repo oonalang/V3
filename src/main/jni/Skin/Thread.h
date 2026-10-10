@@ -2,6 +2,8 @@
 
 #define SKINLOG(...) ((void)__android_log_print(ANDROID_LOG_INFO, "MWD-ASTRAL-SKIN", __VA_ARGS__))
 #define SKINERR(...) ((void)__android_log_print(ANDROID_LOG_ERROR, "MWD-ASTRAL-SKIN", __VA_ARGS__))
+
+#include "Includes/SafePatch.h"   // SafeModeEnabled + verified targets
 std::unordered_map<std::string, bool> sBool;
 std::unordered_map<int, int> activeKillEffects;
 std::unordered_map<int, int> activeBulletTrackEffects;
@@ -1500,6 +1502,9 @@ void LoadSnowboardSkins() {
 template <typename HookFn, typename OrigFn>
 inline bool Skins_HookAt(uintptr_t offset, HookFn replace, OrigFn *backup)
 {
+    if (SafeModeEnabled())
+        return false;
+
     uintptr_t addr = getRealOffset(offset);
     if (addr == 0 || (addr & 3) != 0 || !Tools::IsExecPtr((void *)addr))
     {
@@ -1509,13 +1514,10 @@ inline bool Skins_HookAt(uintptr_t offset, HookFn replace, OrigFn *backup)
         SKINERR("hook skipped, 0x%lx (resolved %p) is not executable code", (unsigned long)offset, (void *)addr);
         return false;
     }
-    uint32_t before = *(volatile uint32_t *)addr;
-    DobbyHook((void *)addr, (void *)replace, (void **)backup);
-    if (*(volatile uint32_t *)addr == before)
-    {
-        SKINERR("hook did not take, 0x%lx (resolved %p)", (unsigned long)offset, (void *)addr);
+    char label[96];
+    snprintf(label, sizeof label, "skin ctor 0x%lx", (unsigned long) offset);
+    if (!SafeDobbyHookAddr((void *) addr, (void *) replace, (void **) backup, label))
         return false;
-    }
     return true;
 }
 
@@ -1565,13 +1567,21 @@ inline int Skins_InstallCtorHooks()
         SkinHookEntry &e = g_skinHookEntries[i];
         if (e.installed)
             continue;
-        uintptr_t addr = getRealOffset(e.offset);
-        if (!Tools::IsPtrValid((void *) addr))
+        // Skins_HookAt proves the target is code (aligned + executable) and that
+        // the trampoline actually landed before marking the entry installed.
+        // The old body here only checked IsPtrValid -- *readable* memory -- so a
+        // stale offset landing in .rodata got a branch written into game data,
+        // and all 19 of these run during the game's own load.
+        if (SafeModeEnabled())
         {
-            SKINERR("hook deferred, address not mapped yet: 0x%lx", (unsigned long) e.offset);
+            SKINLOG("skins thread: safe mode -- ctor hooks skipped");
+            return 0;
+        }
+        if (!Skins_HookAt(e.offset, e.replace, e.backup))
+        {
+            SKINERR("hook deferred/failed: 0x%lx", (unsigned long) e.offset);
             continue;
         }
-        DobbyHook((void *) addr, e.replace, e.backup);
         e.installed = true;
         ++installedNow;
     }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include "Includes/SafePatch.h"
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -50,11 +51,15 @@ inline void InstallBRClassEspConfigHook()
     if (installed)
         return;
 
+    // Readable is not enough: Dobby writes a branch over the first bytes, so the
+    // target has to be proven code (aligned + executable) and the trampoline has
+    // to actually land. SafeDobbyHookAddr does both and logs the outcome.
     void* target = (void*)getAbsoluteAddress("libunity.so", BRClassEspCfg::ConfigCtorRva);
-    if (!Tools::IsPtrValid(target))
+    if (!SafeDobbyHookAddr(target, (void*)hook_BRProfessionChipConfig_ctor,
+                           (void**)&orig_BRProfessionChipConfig_ctor,
+                           "BRProfessionChipConfig::.ctor"))
         return;
 
-    DobbyHook(target, (void*)hook_BRProfessionChipConfig_ctor, (void**)&orig_BRProfessionChipConfig_ctor);
     installed = true;
 }
 

@@ -4,6 +4,7 @@
 
 #include <android/log.h>
 #include "IL2CppSDKGenerator/IL2Cpp/Tools.h"
+#include "SafePatch.h"   // SafeTargetOk / SafeModeEnabled (verified patch + hook targets)
 
 #if defined(__aarch64__) //Compile for arm64 lib only
 #include <And64InlineHook/And64InlineHook.hpp>
@@ -35,10 +36,16 @@ inline void hook(void *offset, void* ptr, void **orig)
                             "hook REFUSED: null replacement (offset %p)", offset);
         return;
     }
-    if (offset == nullptr || ((uintptr_t) offset & 3) != 0 || !Tools::IsExecPtr(offset)) {
+    // Safe mode: the module still loads and still draws, but no game code is
+    // patched -- the switch that separates "hooks killed it" from "the overlay
+    // killed it" without a rebuild.
+    if (SafeModeEnabled())
+        return;
+    // Shared validator: aligned, and mapped executable across the whole 16-byte
+    // window an inline-hook trampoline replaces.
+    if (!SafeTargetOk(offset, "hook target")) {
         __android_log_print(ANDROID_LOG_ERROR, "MWD-ASTRAL",
-                            "hook REFUSED: %p is not executable, aligned code -- RVA does not match this build",
-                            offset);
+                            "hook REFUSED at %p -- reason logged above", offset);
         return;
     }
 

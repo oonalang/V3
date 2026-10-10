@@ -4,6 +4,7 @@
 #include <string>
 #include <dlfcn.h>
 #include <android/log.h>
+#include "Includes/SafePatch.h"   // SafeModeEnabled + verified patch/hook targets
 
 // Breadcrumbs for the triggerbot. Every state change of the driver is logged
 // once with a stable tag, so a crash report can say *when* the game died
@@ -1780,7 +1781,8 @@ inline void InitializeAllHooks() {
     //-- Spectate
     HOOK_LIB("libunity.so", "0x519676C", h_ProcessForDelay, o_ProcessForDelay);
     HOOK_LIB("libunity.so", "0x51966D8", h_NeedDelayProcess, o_NeedDelayProcess);
-    HOOK_LIB("libunity.so", "0x519676C", h_ProcessForDelay, o_ProcessForDelay);  
+    // (0x519676C used to be listed a second time here. Hooking one address twice
+    //  overwrites the first trampoline and leaves orig_* pointing into it.)  
 
 /*
     //-- Unlimited Bullets
@@ -1813,33 +1815,33 @@ inline void InitializeAllHooks() {
     UnityObject_get_name = reinterpret_cast<String *(*)(void *)>(
           getAbsoluteAddress("libunity.so", 0x5052F10));
 
-    DobbyHook((void *)getAbsoluteAddress("libunity.so", 0x5036EB8),
+    SafeDobbyHook("libunity.so", 0x5036EB8,
           (void *)&hook_GameObjectSetActive,
-          (void **)&orig_GameObjectSetActive);
+          (void **)&orig_GameObjectSetActive, "GameObject::SetActive");
           
     //-- Throwable Alert      
-    DobbyHook((void *)getAbsoluteAddress("libunity.so", ThrowAlertCfg::TickRva),
+    SafeDobbyHook("libunity.so", ThrowAlertCfg::TickRva,
           (void *)&hook_WeaponProjectileTick,
-          (void **)&orig_WeaponProjectileTick);
+          (void **)&orig_WeaponProjectileTick, "WeaponProjectile::Tick");
           
     //-- Clear Terrain
-    DobbyHook((void *)getAbsoluteAddress("libunity.so", 0xAE2E1B0),
+    SafeDobbyHook("libunity.so", 0xAE2E1B0,
           (void *)&hook_SetGrassShowState,
-          (void **)&orig_SetGrassShowState);
+          (void **)&orig_SetGrassShowState, "SetGrassShowState");
 
-    DobbyHook((void *)getAbsoluteAddress("libunity.so", 0x7B4E290),
+    SafeDobbyHook("libunity.so", 0x7B4E290,
           (void *)&hook_SetGrassLODBias,
-          (void **)&orig_SetGrassLODBias);         
+          (void **)&orig_SetGrassLODBias, "SetGrassLODBias");         
           
-    DobbyHook((void*)getAbsoluteAddress("libunity.so", 0x9FDEE28), (void*)hooked_SetUltraFrameRateDeviceInfo, (void**)&orig_SetUltraFrameRateDeviceInfo);
+    SafeDobbyHook("libunity.so", 0x9FDEE28, (void*)hooked_SetUltraFrameRateDeviceInfo, (void**)&orig_SetUltraFrameRateDeviceInfo, "SetUltraFrameRateDeviceInfo");
 
     ///Walk Under Water
-    DobbyHook((void *) getAbsoluteAddress("libunity.so", 0x51D31BC), (void *)  &Pawn_GetCurrentDistToWaterSurface, (void **) &oPawn_GetCurrentDistToWaterSurface); 
-    DobbyHook((void *) getAbsoluteAddress("libunity.so", 0x54BC450), (void *)  &PlayerPawn_IsUnderWaterSurface, (void **) &oPlayerPawn_IsUnderWaterSurface); 
-    DobbyHook((void *) getAbsoluteAddress("libunity.so", 0x757162C), (void *)  &CheckInWaterComponent_get_CurrentWaterSurfaceHeight, (void **) &oCheckInWaterComponent_get_CurrentWaterSurfaceHeight); 
+    SafeDobbyHook("libunity.so", 0x51D31BC, (void *)  &Pawn_GetCurrentDistToWaterSurface, (void **) &oPawn_GetCurrentDistToWaterSurface, "Pawn::GetCurrentDistToWaterSurface"); 
+    SafeDobbyHook("libunity.so", 0x54BC450, (void *)  &PlayerPawn_IsUnderWaterSurface, (void **) &oPlayerPawn_IsUnderWaterSurface, "PlayerPawn::IsUnderWaterSurface"); 
+    SafeDobbyHook("libunity.so", 0x757162C, (void *)  &CheckInWaterComponent_get_CurrentWaterSurfaceHeight, (void **) &oCheckInWaterComponent_get_CurrentWaterSurfaceHeight, "CheckInWaterComponent::get_CurrentWaterSurfaceHeight"); 
 
   //-- Camera POV
-  DobbyHook((void *) getAbsoluteAddress("libunity.so", 0xC347950), (void *)  &InputSettingConfig_Instant_GetMainCameraFov_3p, (void **) &oInputSettingConfig_Instant_GetMainCameraFov_3p); 
+  SafeDobbyHook("libunity.so", 0xC347950, (void *)  &InputSettingConfig_Instant_GetMainCameraFov_3p, (void **) &oInputSettingConfig_Instant_GetMainCameraFov_3p, "GetMainCameraFov_3p"); 
 
     //-- Unlock Blueprints
     HOOK_LIB("libunity.so", "0x901F988", IsUnlocked, orig_IsUnlocked);
