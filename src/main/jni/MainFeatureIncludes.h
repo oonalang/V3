@@ -16,6 +16,7 @@
 #include "System/UI/SkinTab.h"
 #include "System/UI/SettingsTab.h"
 #include "System/UI/Keyboard.h"
+#include "System/UI/Redesign/Ui.h"
 #include "System/UI/LoadingAnimation.h"
 #include "System/UI/Logo.h"
 #include "System/UI/FloatingInfo.h"

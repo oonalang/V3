@@ -1093,6 +1093,7 @@ static void ConsumePendingLoginResult() {
     if (!loginResult.empty()) {
         // Mirror the render-thread handling used in the login window so the app
         // still reaches the menu even if the login UI never painted.
+        LOGI("login: result consumed (%s)", loginResult.c_str());
         err = loginResult;
         if (err == "OK") {
             showKeyboard = false;
@@ -1100,6 +1101,7 @@ static void ConsumePendingLoginResult() {
             err.clear();
             isLogin = true;
             g_ShowRadialMenu = true;
+            LOGI("login: menu transition done");
             ApplyForbidKickOffOnLogin();
         }
     }
@@ -1821,36 +1823,29 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                 const ImVec2 pos = ImGui::GetWindowPos();
                 ImDrawList* draw = ImGui::GetWindowDrawList();
 
-                ModernUI::RenderMenuEdgeLightning(draw, draw, pos, ImVec2(pos.x + 640.0f, pos.y + 460.0f));
-
                 // dmalogin palette (framework/settings/colors.h) — login only; menu keeps the ECHO accent
                 const ImU32 dmAccent      = IM_COL32(189, 189, 255, 255);   // c->accent
                 const ImU32 dmAccentDim   = IM_COL32(156, 156, 255, 255);   // c->g_accent
                 const ImU32 dmFrame       = IM_COL32(25, 25, 36, 255);      // c->frame_layout
                 const ImU32 dmFrameBorder = IM_COL32(39, 39, 58, 255);      // c->frame_border
-                const ImU32 dmTextMut     = IM_COL32(60, 60, 83, 255);      // c->text_inactive
+                const ImU32 dmTextMut     = IM_COL32(150, 150, 166, 255);      // redesigned: readable muted
                 const ImU32 dmWhite       = IM_COL32(255, 255, 255, 255);
-                auto dmTint = [](float s, float a) -> ImU32 {
-                    return IM_COL32((int)(189.0f * s), (int)(189.0f * s), (int)(255.0f * s), (int)(a * 255.0f));
-                };
 
                 const ImVec2 login_size = ImVec2(640, 460);
-                const float outerRounding = 10.0f;
-                const float innerInset = 10.0f;
-                const float innerRounding = 12.0f;
-                const float outerGlowHeight = login_size.y * 0.42f;
-                const ImVec2 innerMin = pos + ImVec2(innerInset, innerInset);
-                const ImVec2 innerMax = pos + login_size - ImVec2(innerInset, innerInset);
-                draw->AddRectFilled(pos, pos + login_size, IM_COL32(0, 0, 0, 110), outerRounding);
-                draw->AddRectFilledMultiColor(pos, ImVec2(pos.x + login_size.x, pos.y + outerGlowHeight), dmTint(0.22f, 0.10f), dmTint(0.16f, 0.05f), IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0));
-                draw->AddRectFilled(innerMin, innerMax, IM_COL32(0, 0, 0, 188), innerRounding);
-                draw->AddRectFilledMultiColor(innerMin, ImVec2(innerMax.x, innerMin.y + (innerMax.y - innerMin.y) * 0.44f), dmTint(0.22f, 0.11f), dmTint(0.16f, 0.06f), IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0));
 
-                auto drawLoginButton = [&](const char* label, float y, float width, bool primary) -> bool {
-                    const float buttonX = (640.0f - width) * 0.5f;
+                // Redesigned card: glow + glass + shield logo + centered title.
+                redesign::DrawLoginChrome(draw, pos, login_size);
+
+                // All interactive rows below the chrome (logo block ends at y=166).
+                const float rowW = 480.0f;
+                const float rowH = 50.0f;
+                const float rowX = (login_size.x - rowW) * 0.5f;
+
+                auto drawLoginButton = [&](const char* label, float y, float width) -> bool {
+                    const float buttonX = (login_size.x - width) * 0.5f;
                     ImGui::SetCursorPos(ImVec2(buttonX, y));
                     if (F50) ImGui::PushFont(F50);
-                    const bool pressed = ImGui::InvisibleButton(label, ImVec2(width, 50.0f));
+                    const bool pressed = ImGui::InvisibleButton(label, ImVec2(width, rowH));
                     const bool hovered = ImGui::IsItemHovered();
                     ImFont* labelFont = ImGui::GetFont();
                     const float labelSize = ImGui::GetFontSize();
@@ -1858,15 +1853,10 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
 
                     const ImVec2 buttonMin = ImGui::GetItemRectMin();
                     const ImVec2 buttonMax = ImGui::GetItemRectMax();
-                    const bool useAccent = primary ? !hovered : hovered;
-                    if (useAccent) {
-                        draw->AddRectFilledMultiColor(buttonMin, buttonMax, dmAccent,
-                            dmAccentDim, dmAccentDim,
-                            dmAccent, 8.0f);
-                    } else {
-                        draw->AddRectFilled(buttonMin, buttonMax, dmFrame, 8.0f);
-                        draw->AddRect(buttonMin, buttonMax, dmFrameBorder, 8.0f, 0, 1.0f);
-                    }
+
+                    draw->AddRectFilled(buttonMin, buttonMax, hovered ? redesign::Theme::BgHover() : dmFrame, 12.0f);
+                    const ImU32 borderColor = hovered ? redesign::Theme::Accent() : dmFrameBorder;
+                    draw->AddRect(buttonMin, buttonMax, borderColor, 12.0f, 0, hovered ? 1.8f : 1.0f);
 
                     const float labelSizeUse = labelSize > 0.0f ? labelSize : 16.0f;
                     const ImVec2 labelTextSize = (labelFont != nullptr)
@@ -1874,7 +1864,7 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                         : ImGui::CalcTextSize(label);
                     const ImVec2 labelTextPos = ImVec2((buttonMin.x + buttonMax.x - labelTextSize.x) * 0.5f,
                         (buttonMin.y + buttonMax.y - labelTextSize.y) * 0.5f);
-                    const ImU32 labelColor = useAccent ? IM_COL32(0, 0, 0, 255) : dmWhite;
+                    const ImU32 labelColor = hovered ? IM_COL32(12, 12, 16, 255) : redesign::Theme::Text();
                     if (labelFont != nullptr) draw->AddText(labelFont, labelSizeUse, labelTextPos, labelColor, label);
                     else draw->AddText(labelTextPos, labelColor, label);
 
@@ -1882,40 +1872,18 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                 };
 
                 {
-                    const char* titleText = "LOG IN";
-                    const float titleSize = 34.0f;
-                    const float titleX = pos.x + 80.0f;
-                    const float titleY = pos.y + 56.0f;
-                    if (F50) draw->AddText(F50, titleSize, ImVec2(titleX, titleY), dmWhite, titleText);
-                    else draw->AddText(ImVec2(titleX, titleY), dmWhite, titleText);
-                }
-
-                {
                     const char* helperLine1 = "Authorize through your license key where";
                     const char* helperLine2 = "your subscription is located.";
-                    const float helperX = pos.x + 30.0f;
-                    draw->AddText(ImVec2(helperX, pos.y + 106.0f), dmTextMut, helperLine1);
-                    draw->AddText(ImVec2(helperX, pos.y + 128.0f), dmTextMut, helperLine2);
+                    const float helperX = pos.x + (login_size.x - ImGui::CalcTextSize(helperLine1).x) * 0.5f;
+                    draw->AddText(ImVec2(helperX, pos.y + 176.0f), redesign::Theme::TextMut(), helperLine1);
+                    const float helper2X = pos.x + (login_size.x - ImGui::CalcTextSize(helperLine2).x) * 0.5f;
+                    draw->AddText(ImVec2(helper2X, pos.y + 196.0f), redesign::Theme::TextMut(), helperLine2);
                 }
 
-                {
-                    const char* orLabel = "OR";
-                    const float sepLeft = pos.x + 80.0f;
-                    const float sepRight = pos.x + 520.0f;
-                    const float sepMidY = pos.y + 254.0f;
-                    const ImVec2 orSize = ImGui::CalcTextSize(orLabel);
-                    const float sepMidX = (sepLeft + sepRight) * 0.5f;
-                    const float sepGap = orSize.x * 0.5f + 14.0f;
-                    const ImU32 sepColor = dmTextMut;
-                    draw->AddLine(ImVec2(sepLeft, sepMidY), ImVec2(sepMidX - sepGap, sepMidY), sepColor, 1.0f);
-                    draw->AddLine(ImVec2(sepMidX + sepGap, sepMidY), ImVec2(sepRight, sepMidY), sepColor, 1.0f);
-                    draw->AddText(ImVec2(sepMidX - orSize.x * 0.5f, sepMidY - orSize.y * 0.5f), sepColor, orLabel);
-                }
-
-                const float inputWidth = 440.0f;
-                const float inputHeight = 56.0f;
+                const float inputWidth = 480.0f;
+                const float inputHeight = 54.0f;
                 const float inputX = (login_size.x - inputWidth) * 0.5f;
-                ImGui::SetCursorPos(ImVec2(inputX, 314.0f));
+                ImGui::SetCursorPos(ImVec2(inputX, 224.0f));
                 static const ImGui::AstralInputStyle loginInputStyle = {
                     ImVec4(25.0f/255.0f, 25.0f/255.0f, 36.0f/255.0f, 1.0f),     // bg       (frame_layout)
                     ImVec4(25.0f/255.0f, 25.0f/255.0f, 36.0f/255.0f, 1.0f),     // bgHovered
@@ -1941,13 +1909,13 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                     if (ImGui::GetMousePos().y > screenHeight - keyboardHeight) showKeyboard = false;
                 }
 
-                if (drawLoginButton("PASTE", 176.0f, 480.0f, false)) {
+                if (drawLoginButton("PASTE", 292.0f, 200.0f)) {
                     auto key = getClipboard();
                     strncpy(s, key.c_str(), sizeof(s) - 1);
                     s[sizeof(s) - 1] = '\0';
                 }
 
-                if (drawLoginButton("LOG IN", 360.0f, 480.0f, true)) {
+                if (drawLoginButton("LOG IN", 360.0f, 480.0f)) {
                     // Prevent re-triggering while a login is already in flight, and
                     // keep the field editable so the user can change the key if they
                     // mistype it before the request finishes.
@@ -2025,8 +1993,10 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
             // ================================================================
             if (g_ShowRadialMenu)
             {
-                // ---------- PIZZA MENU (exclusive) ----------
-                const int picked = ModernUI::RenderCategoryWheel(viewportCenter);
+                // ---------- HUB LAUNCHER (exclusive) ----------
+                static bool loggedWheelFirstFrame = false;
+                if (!loggedWheelFirstFrame) { loggedWheelFirstFrame = true; LOGI("ui: hub first frame"); }
+                const int picked = redesign::RenderHub(viewportCenter);
                 if (picked >= 1 && picked <= 6) {
                     page = picked;
                     activeTab = picked;
@@ -2036,6 +2006,8 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
             else
             {
                 // ---------- CONTENT BOX (exclusive) ----------
+                static bool loggedContentFirstFrame = false;
+                if (!loggedContentFirstFrame) { loggedContentFirstFrame = true; LOGI("ui: content box first frame, tab=%d", activeTab); }
                 uncollapseOpenAnim = ImClamp(uncollapseOpenAnim + ImGui::GetIO().DeltaTime * 5.0f, 0.0f, 1.0f);
                 float openEase = uncollapseOpenAnim * uncollapseOpenAnim * (3.0f - 2.0f * uncollapseOpenAnim);
                 float openAlpha = 0.2f + 0.8f * openEase;
@@ -2081,9 +2053,8 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                         menuWindowPos = runtimeWindowPos;
                         ImDrawList *runtimeDrawList = ImGui::GetWindowDrawList();
 
-                        runtimeDrawList->AddRectFilled(runtimeWindowPos, ImVec2(runtimeWindowPos.x + runtimeWindowSize.x, runtimeWindowPos.y + runtimeWindowSize.y), IM_COL32(6, 6, 6, 255), 5.0f);
-                        runtimeDrawList->AddRect(runtimeWindowPos, ImVec2(runtimeWindowPos.x + runtimeWindowSize.x, runtimeWindowPos.y + runtimeWindowSize.y), IM_COL32(45, 45, 45, 120), 5.0f, 0, 1.0f);
-                        runtimeDrawList->AddRect(runtimeWindowPos + ImVec2(1.0f, 1.0f), ImVec2(runtimeWindowPos.x + runtimeWindowSize.x - 1.0f, runtimeWindowPos.y + runtimeWindowSize.y - 1.0f), IM_COL32(10, 10, 10, 120), 4.0f, 0, 1.0f);
+                        redesign::DrawCard(runtimeDrawList, runtimeWindowPos, ImVec2(runtimeWindowPos.x + runtimeWindowSize.x, runtimeWindowPos.y + runtimeWindowSize.y), 16.0f);
+                        runtimeDrawList->AddRectFilledMultiColor(runtimeWindowPos, ImVec2(runtimeWindowPos.x + runtimeWindowSize.x, runtimeWindowPos.y + 120.0f), IM_COL32(26, 26, 34, 200), IM_COL32(26, 26, 34, 0), IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0));
 
                         const float outerPad = 14.0f;
                         const float layoutGap = 8.0f;
@@ -2111,8 +2082,8 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                         runtimeState.page = ImClamp(runtimeState.page, 1, 6);
                         runtimeState.activeTab = ImClamp(runtimeState.activeTab, 1, 6);
 
-                        runtimeDrawList->AddRectFilled(headerMin, headerMax, IM_COL32(16, 16, 16, 255), 4.0f);
-                        runtimeDrawList->AddRect(headerMin, headerMax, IM_COL32(22, 22, 22, 255), 4.0f, 0, 1.0f);
+                        runtimeDrawList->AddRectFilled(headerMin, headerMax, IM_COL32(20, 20, 26, 235), 12.0f);
+                        runtimeDrawList->AddRect(headerMin, headerMax, IM_COL32(44, 44, 56, 190), 12.0f, 0, 1.0f);
 
                         const ImVec2 flameCenter(headerMin.x + 28.0f, headerMin.y + headerHeight * 0.5f);
                         runtimeDrawList->AddCircleFilled(flameCenter, 18.0f, IM_COL32(24, 24, 24, 255), 28);
@@ -2204,7 +2175,8 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                         runtimeState.tabAlpha = ImClamp(runtimeState.tabAlpha + (4.0f * ImGui::GetIO().DeltaTime * (runtimeState.page == runtimeState.activeTab ? 1.0f : -1.0f)), 0.0f, 1.0f);
                         if (runtimeState.tabAlpha == 0.0f && runtimeState.tabAdd == 0.0f) runtimeState.activeTab = runtimeState.page;
 
-                        runtimeDrawList->AddRectFilled(hostMin, hostMax, IM_COL32(6, 6, 6, 255), 4.0f);
+                        runtimeDrawList->AddRectFilled(hostMin, hostMax, IM_COL32(12, 12, 15, 248), 12.0f);
+                        runtimeDrawList->AddRect(hostMin, hostMax, IM_COL32(38, 38, 48, 170), 12.0f, 0, 1.0f);
 
                         ImGui::SetCursorScreenPos(contentInnerMin);
                         ImGui::BeginChild("##RuntimeContentHost", contentInnerSize, false, ImGuiWindowFlags_NoBackground);
