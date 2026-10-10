@@ -8,3 +8,6 @@ build/
 
 # Vendored NDK toolchain (3.6 GB) + build outputs: keep locally, never in git
 .ndk/
+
+# local syntax-check toolchain (not part of the project)
+.toolchain/

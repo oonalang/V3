@@ -2286,9 +2286,13 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                             menuPosOnDisk = menuWindowPos;
                         }
                     }
-                    menuWindowPos = ModernUI::ClampMenuPos(menuWindowPos, mainWindowSize, displaySize);
-                    ImGui::SetNextWindowPos(menuWindowPos, ImGuiCond_Always);
                 }
+                // Re-clamp every frame, not just on first open. A stale saved
+                // position, a rotation or a resolution change must never be able
+                // to strand the card -- and with it the whole sidebar -- off the
+                // left edge of the screen.
+                menuWindowPos = ModernUI::ClampMenuPos(menuWindowPos, mainWindowSize, displaySize);
+                ImGui::SetNextWindowPos(menuWindowPos, ImGuiCond_Always);
                 ImGui::SetNextWindowSize(mainWindowSize, ImGuiCond_Always);
                 ImGui::SetNextWindowBgAlpha(0.0f);
 

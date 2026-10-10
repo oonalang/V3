@@ -256,30 +256,46 @@ inline float A_FireCrosshairRadiusPx()
 // Nearest enemy whose head or body is under the crosshair. Works at any range:
 // there is no max-distance filter and no line-of-sight requirement, so an enemy
 // standing on the far side of the map is still a valid A-Fire target.
+inline bool A_FireIsReadablePawn(uintptr_t pawnU)
+{
+    // An IL2CPP object reference is 8-byte aligned; a stale/torn entry in the
+    // engine list usually is not. Rejecting those is what stops the target scan
+    // from dereferencing freed pawns -- the crash that started once the enemy
+    // list went from empty to populated with moving bots.
+    if (pawnU == 0 || (pawnU & 0x7) != 0)
+        return false;
+    return Tools::IsPtrValid((void *) pawnU);
+}
+
+// Nearest enemy whose head or body is under the crosshair, at any range.
+// Bones are read through the game's own Pawn accessors -- the exact same ones
+// DrawESP already uses -- instead of the raw m_HeadBone / m_Mesh transform
+// fields the old scan dereferenced. That raw deref on a moving/animated pawn is
+// the crash, and it is why "bots appeared -> game died".
 inline uintptr_t A_FireFindTarget()
 {
-    Camera *cam = Camera::get_main();
-    if (cam == nullptr)
-        return 0;
     if (Class_Gameplay_get_MatchGame == 0 || Class_Gameplay_get_LocalPawn == 0)
         return 0;
 
-    auto get_MatchGame_f = (uintptr_t (*)()) (Class_Gameplay_get_MatchGame);
-    const uintptr_t matchGame = get_MatchGame_f();
-    if (!Tools::IsPtrValid((void *) matchGame))
-        return 0;
-    if (!*(volatile uintptr_t *) &matchGame)
+    Camera *cam = Camera::get_main();
+    if (!Tools::IsPtrValid((void *) cam))
         return 0;
 
-    auto get_LocalPawn_f = (uintptr_t (*)()) (Class_Gameplay_get_LocalPawn);
-    if (get_LocalPawn_f() == 0)
+    const uintptr_t matchGame = ((uintptr_t (*)()) Class_Gameplay_get_MatchGame)();
+    if (!Tools::IsPtrValid((void *) matchGame))
+        return 0;
+    if (((uintptr_t (*)()) Class_Gameplay_get_LocalPawn)() == 0)
         return 0;
 
     auto EnemyPawns = *(List<uintptr_t> **) (matchGame + Class_BaseGame_EnemyPawns);
-    if (!EnemyPawns || !Tools::IsPtrValid((void *) EnemyPawns))
+    if (!Tools::IsPtrValid((void *) EnemyPawns))
         return 0;
     auto Items = EnemyPawns->getItems();
-    if (!Items)
+    if (!Tools::IsPtrValid((void *) Items))
+        return 0;
+
+    const int count = EnemyPawns->getSize();
+    if (count <= 0 || count > 1024)
         return 0;
 
     const float cx = (float) get_width()  * 0.5f;
@@ -290,49 +306,42 @@ inline uintptr_t A_FireFindTarget()
     uintptr_t best = 0;
     float bestDist = radiusSq + 1.0f;
 
-    const int count = EnemyPawns->getSize();
     for (int i = 0; i < count; i++)
     {
-        uintptr_t pawnU = Items[i];
-        if (!pawnU || !Tools::IsPtrValid((void *) pawnU))
+        const uintptr_t pawnU = Items[i];
+        if (!A_FireIsReadablePawn(pawnU))
             continue;
         if (!*(bool *) (pawnU + Class_Pawn_m_IsAlive))
             continue;
 
-        // Head first (preferred), then the body root: whichever the crosshair
-        // actually covers.
-        auto m_HeadBone = *(Transform **) (pawnU + Class_Pawn_m_HeadBone);
-        if (m_HeadBone && Tools::IsPtrValid((void *) m_HeadBone))
+        Pawn *pawn = (Pawn *) pawnU;
+        const Vector3 headPos = pawn->get_HeadPosition();
+        const Vector3 bodyPos = pawn->get_LastPawnPos();
+
+        const Vector3 headSc = cam->WorldToScreenPoint(headPos);
+        if (headSc.z > 0.0f)
         {
-            const Vector3 headSc = cam->WorldToScreenPoint(m_HeadBone->get_position());
-            if (headSc.z > 0.0f)
+            const float dx = headSc.x - cx;
+            const float dy = headSc.y - cy;
+            const float d2 = dx * dx + dy * dy;
+            if (d2 <= radiusSq && d2 < bestDist)
             {
-                const float dx = headSc.x - cx;
-                const float dy = headSc.y - cy;
-                const float d2 = dx * dx + dy * dy;
-                if (d2 <= bestDist)
-                {
-                    best = pawnU;
-                    bestDist = d2;
-                    continue; // head covered -- do not also test the body
-                }
+                best = pawnU;
+                bestDist = d2;
+                continue; // head covered -- do not also test the body
             }
         }
 
-        auto m_Mesh = *(Transform **) (pawnU + Class_Pawn_m_Mesh);
-        if (m_Mesh && Tools::IsPtrValid((void *) m_Mesh))
+        const Vector3 bodySc = cam->WorldToScreenPoint(bodyPos);
+        if (bodySc.z > 0.0f)
         {
-            const Vector3 bodySc = cam->WorldToScreenPoint(m_Mesh->get_position());
-            if (bodySc.z > 0.0f)
+            const float dx = bodySc.x - cx;
+            const float dy = bodySc.y - cy;
+            const float d2 = dx * dx + dy * dy;
+            if (d2 <= radiusSq && d2 < bestDist)
             {
-                const float dx = bodySc.x - cx;
-                const float dy = bodySc.y - cy;
-                const float d2 = dx * dx + dy * dy;
-                if (d2 <= bestDist)
-                {
-                    best = pawnU;
-                    bestDist = d2;
-                }
+                best = pawnU;
+                bestDist = d2;
             }
         }
     }
@@ -513,49 +522,82 @@ inline bool A_HitboxRayHitsSphere(const Vector3 &startPos, const Vector3 &dir, c
     return distSq <= radius * radius;
 }
 
-inline bool SingleLineCheckPhysics(void* instance, int hitType, void* hitTarget, void* hitCollider, Vector3 startPos, Vector3 dir, void* impactInfo) {
-    if (instance != NULL && Config.ExtraMenu.Hit) {
-        const float dirLenSq = dir.x * dir.x + dir.y * dir.y + dir.z * dir.z;
-        if (dirLenSq >= 0.0001f) {
-            const float dirInvLen = 1.0f / sqrtf(dirLenSq);
-            const Vector3 D(dir.x * dirInvLen, dir.y * dirInvLen, dir.z * dirInvLen);
-            const float hitboxScale = ImClamp(Config.ExtraMenu.HitboxScale, 1.0f, 25.0f);
-            // Slider scales the spheres: 1.0 = close to the real body, 25 = huge.
-            const float bodyRadius = 0.4f + 1.6f * hitboxScale;
-            const float headRadius = 0.22f + 0.28f * hitboxScale;
+// Shared body for the hitbox hook. It is installed on BOTH the base
+// WeaponFireComponent::SingleLineCheckPhysics (0xC1514C0) and the
+// WeaponFireComponent_Instant override (0xC9B2A9C). A normal gun dispatches to
+// the Instant override -- hooking only the base meant the whole feature never
+// ran for the weapons the player actually holds.
+typedef bool (*SingleLineCheckPhysicsFn)(void *, int, void *, void *, Vector3, Vector3, void *);
+inline SingleLineCheckPhysicsFn orig_SingleLineCheckPhysics_Instant = nullptr;
 
-            // Fast path: the game told us exactly what it swept against. Only
-            // usable when that target really is a live enemy pawn -- world
-            // geometry / props / freed pointers pass IsPtrValid() but deref into
-            // garbage (the crash from firing beside an enemy).
-            Pawn* targetPawn = A_HitboxTargetIsEnemyPawn(hitTarget) ? (Pawn*)hitTarget : nullptr;
+inline bool SingleLineCheckPhysicsCommon(SingleLineCheckPhysicsFn orig,
+                                         void *instance, int hitType,
+                                         void *hitTarget, void *hitCollider,
+                                         Vector3 startPos, Vector3 dir,
+                                         void *impactInfo)
+{
+    if (instance == nullptr || orig == nullptr || !Config.ExtraMenu.Hit)
+        return orig(instance, hitType, hitTarget, hitCollider, startPos, dir, impactInfo);
 
-            // Fallback: the game often sweeps against colliders or geometry
-            // instead of the pawn, which the fast path ignores -- that was the
-            // "slider does nothing" part. Scan the live enemy list along the ray.
-            if (targetPawn == nullptr) {
-                targetPawn = A_HitboxFindEnemyAlongRay(startPos, D);
-            }
+    const float dirLenSq = dir.x * dir.x + dir.y * dir.y + dir.z * dir.z;
+    if (dirLenSq < 0.0001f)
+        return orig(instance, hitType, hitTarget, hitCollider, startPos, dir, impactInfo);
 
-            if (targetPawn != nullptr && targetPawn->m_IsAlive()) {
-                const Vector3 bodyCenter = targetPawn->get_LastPawnPos();
-                const Vector3 headCenter = targetPawn->get_HeadPosition();
+    const float dirInvLen = 1.0f / sqrtf(dirLenSq);
+    const Vector3 D(dir.x * dirInvLen, dir.y * dirInvLen, dir.z * dirInvLen);
 
-                const bool hitHead = A_HitboxRayHitsSphere(startPos, D, headCenter, headRadius);
-                const bool hitBody = hitHead || A_HitboxRayHitsSphere(startPos, D, bodyCenter, bodyRadius);
+    // First let the game resolve its own, real hit. When it succeeds its
+    // [Out]/ref arguments (impactInfo / hitTarget / hitCollider) are populated
+    // for real, which is what the caller needs to actually apply damage.
+    if (orig(instance, hitType, hitTarget, hitCollider, startPos, dir, impactInfo))
+    {
+        g_hitboxHitHead = false;
+        g_hitboxHitPawn = nullptr;
+        return true;
+    }
 
-                if (hitBody) {
-                    g_hitboxHitHead = hitHead;
-                    g_hitboxHitPawn = targetPawn;
-                    return true;
-                }
-            }
+    // The game found nothing, but the shot ray passes through an enemy pawn
+    // inside the scaled hitbox sphere. Force the hit and -- the part the old
+    // code omitted -- publish the target into the caller's [Out] slot so the
+    // shot is not silently thrown away.
+    const float hitboxScale = ImClamp(Config.ExtraMenu.HitboxScale, 1.0f, 25.0f);
+    const float bodyRadius = 0.4f + 1.6f * hitboxScale;
+    const float headRadius = 0.22f + 0.28f * hitboxScale;
+
+    Pawn *targetPawn = A_HitboxFindEnemyAlongRay(startPos, D);
+    if (targetPawn != nullptr && targetPawn->m_IsAlive())
+    {
+        const Vector3 bodyCenter = targetPawn->get_LastPawnPos();
+        const Vector3 headCenter = targetPawn->get_HeadPosition();
+
+        const bool hitHead = A_HitboxRayHitsSphere(startPos, D, headCenter, headRadius);
+        const bool hitBody = hitHead || A_HitboxRayHitsSphere(startPos, D, bodyCenter, bodyRadius);
+
+        if (hitBody)
+        {
+            // [Out] object hitTarget is an object reference slot on the caller's
+            // stack -- write the forced pawn through it.
+            if (hitTarget != nullptr)
+                *(void **) hitTarget = (void *) targetPawn;
+            g_hitboxHitHead = hitHead;
+            g_hitboxHitPawn = targetPawn;
+            return true;
         }
     }
 
     g_hitboxHitHead = false;
     g_hitboxHitPawn = nullptr;
-    return orig_SingleLineCheckPhysics(instance, hitType, hitTarget, hitCollider, startPos, dir, impactInfo);
+    return false;
+}
+
+inline bool SingleLineCheckPhysics(void *instance, int hitType, void *hitTarget, void *hitCollider, Vector3 startPos, Vector3 dir, void *impactInfo)
+{
+    return SingleLineCheckPhysicsCommon(orig_SingleLineCheckPhysics, instance, hitType, hitTarget, hitCollider, startPos, dir, impactInfo);
+}
+
+inline bool SingleLineCheckPhysics_Instant(void *instance, int hitType, void *hitTarget, void *hitCollider, Vector3 startPos, Vector3 dir, void *impactInfo)
+{
+    return SingleLineCheckPhysicsCommon(orig_SingleLineCheckPhysics_Instant, instance, hitType, hitTarget, hitCollider, startPos, dir, impactInfo);
 }
 
 inline void* (*orig_CalcDamageInfoInstantHit)(void* instance, void** inImpactInfo, unsigned char inFireMode, void* sourcePos, int clientTime, int ammoCount, float punchX, float punchY, float spreadX, float spreadY, float fightOffSpeed, float fightOffUp) = nullptr;
@@ -1570,6 +1612,8 @@ inline void InitializeAllHooks() {
 
     //-- Increase Damage
     HOOK_LIB("libunity.so", "0xC1514C0", SingleLineCheckPhysics, orig_SingleLineCheckPhysics);
+    // WeaponFireComponent_Instant::SingleLineCheckPhysics -- the override a normal gun calls.
+    HOOK_LIB("libunity.so", "0xC9B2A9C", SingleLineCheckPhysics_Instant, orig_SingleLineCheckPhysics_Instant);
 
     HOOK_LIB("libunity.so", "0x5109DE4", CalcDamageInfoInstantHit, orig_CalcDamageInfoInstantHit);
 
