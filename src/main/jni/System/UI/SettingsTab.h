@@ -220,9 +220,13 @@ namespace settings_tab
     inline void RenderEnhancementCard()
     {
         custom::Checkbox("Clear Display", &Config.ExtraMenu.ClearDisplay);
-        custom::Checkbox("Forbid Kick-Off", &Config.ExtraMenu.ForbidKickOff);
-        if (Config.ExtraMenu.ForbidKickOff)
-            custom::Checkbox("Forbid On Login", &Config.ExtraMenu.ForbidKickOffOnLogin);
+        // Anti Leak replaces the old "Forbid Kick-Off" / "Forbid On Login" pair:
+        // one switch, and the work runs on the game thread with the il2cpp thread
+        // attached, so it no longer crashes the game when someone else logs on.
+        custom::Checkbox("Anti Leak", &Config.ExtraMenu.ForbidKickOff);
+        if (Config.ExtraMenu.ForbidKickOff) {
+            ImGui::TextColored(c::text::text, "Blocks the login kick from another device");
+        }
         custom::Checkbox("VSync Mode", &Config.ExtraMenu.Grap);
         if (custom::Checkbox("Frame Smoothness", &Config.Aim.FpsLevel)) {
             Config.Aim.showFPSLevelSlider = Config.Aim.FpsLevel;

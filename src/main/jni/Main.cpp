@@ -946,6 +946,9 @@ namespace font {
     ImFont* icomoon_logo = nullptr;
     ImFont* inter_semibold = nullptr;
     ImFont* icomoon_page = nullptr;
+    // Fonts taken straight from the eliwoahzja/Lumin framework (Fonts/LuminFonts.h).
+    ImFont* lumin_medium = nullptr;   // Inter Medium  (secondary / helper text)
+    ImFont* lumin_icon = nullptr;     // uicons-regular-rounded (Lumin's glyph set)
 }
 
 static int g_GlWidth, g_GlHeight;
@@ -1627,6 +1630,66 @@ inline void DrawTabPanicBar(int activeTab)
     ImGui::Dummy(ImVec2(0.0f, 4.0f));
 }
 
+// ---------------------------------------------------------------------------
+// Menu sidebar page row.
+//
+// Ported from the eliwoahzja/imgui reference menu: each category is an icon +
+// label row in the left rail with an animated accent pill behind the active
+// entry and a smoothly-animated icon/text tint. Replaces the old floating hub
+// launcher, whose categories now live here as real tabs inside the window.
+// ---------------------------------------------------------------------------
+inline bool DrawSidebarPage(const char *id, const char *icon, const char *label,
+                            bool selected, const ImVec2 &size)
+{
+    ImGui::PushID(id);
+    const ImVec2 pos = ImGui::GetCursorScreenPos();
+    const ImVec2 bbMax(pos.x + size.x, pos.y + size.y);
+
+    ImGui::InvisibleButton("##page", size);
+    const bool hovered = ImGui::IsItemHovered();
+    const bool pressed = ImGui::IsItemClicked();
+    const ImGuiID key = ImGui::GetItemID();
+
+    static std::unordered_map<ImGuiID, float> s_anim;
+    float &a = s_anim[key];
+    a = ImLerp(a, selected ? 1.0f : 0.0f, ImGui::GetIO().DeltaTime * 9.0f);
+
+    ImDrawList *dl = ImGui::GetWindowDrawList();
+    const ImU32 accent = zenin::T::Accent;
+
+    if (a > 0.004f) {
+        dl->AddRectFilled(pos, bbMax,
+                          IM_COL32(255, 90, 92, (int)(40.0f * a)), 10.0f);
+        dl->AddRectFilled(pos, ImVec2(pos.x + 3.0f, bbMax.y), accent, 10.0f,
+                          ImDrawFlags_RoundCornersLeft);
+    } else if (hovered) {
+        dl->AddRectFilled(pos, bbMax, IM_COL32(255, 255, 255, 12), 10.0f);
+    }
+
+    const ImU32 textCol = selected ? IM_COL32(255, 255, 255, 255)
+                        : (hovered ? IM_COL32(216, 216, 222, 255)
+                                   : IM_COL32(138, 138, 146, 255));
+    const ImU32 iconCol = selected ? accent : textCol;
+
+    ImFont *iconFont = custom::shell::GetIconFont();
+    if (iconFont) {
+        const ImVec2 isz = custom::shell::MeasureText(iconFont, 15.0f, icon);
+        dl->AddText(iconFont, 15.0f, ImVec2(pos.x + 16.0f, pos.y + (size.y - isz.y) * 0.5f),
+                    iconCol, icon);
+    }
+
+    ImFont *labelFont = custom::shell::GetTextFont();
+    const float labelSize = 13.5f;
+    const ImVec2 lsz = labelFont ? labelFont->CalcTextSizeA(labelSize, FLT_MAX, 0.0f, label)
+                                 : ImGui::CalcTextSize(label);
+    if (labelFont)
+        dl->AddText(labelFont, labelSize,
+                    ImVec2(pos.x + 44.0f, pos.y + (size.y - lsz.y) * 0.5f), textCol, label);
+
+    ImGui::PopID();
+    return pressed;
+}
+
 EGLBoolean (*old_eglSwapBuffers)(EGLDisplay dpy, EGLSurface surface);
 EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
 {
@@ -1671,6 +1734,33 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
         iconsConfig.OversampleH = 2.5f;
         iconsConfig.OversampleV = 2.5f;
         iconsConfig.FontDataOwnedByAtlas = false;
+        // ── Lumin fonts (framework/helpers/fonts.cpp) ───────────────────────
+        // inter_medium at 11-16px for helper/status text, and the uicons icon
+        // font registered over Lumin's private glyph range.
+        ImFontConfig lumin_medium_config;
+        lumin_medium_config.MergeMode = false;
+        lumin_medium_config.PixelSnapH = true;
+        lumin_medium_config.FontDataOwnedByAtlas = false;
+        font::lumin_medium = io.Fonts->AddFontFromMemoryTTF(
+            (void*)lumin::fonts::inter_medium, sizeof(lumin::fonts::inter_medium), 16.f,
+            &lumin_medium_config, io.Fonts->GetGlyphRangesDefault());
+
+        static const ImWchar lumin_icon_ranges[] = {
+            0x26A0, 0x26A0, 0x26D4, 0x26D4, 0x2714, 0x2714, 0xE70D, 0xE70E,
+            0xF1E7, 0xF1E7, 0xF309, 0xF309, 0xF3A2, 0xF3A2, 0xF5F8, 0xF5F8,
+            0xF71C, 0xF71C, 0xF87D, 0xF87D, 0xF8E1, 0xF8E1, 0xFB7C, 0xFB7C,
+            0xFD32, 0xFD32, 0xFD5F, 0xFD5F, 0xFE19, 0xFE19, 0xFEA0, 0xFEA0,
+            0xFEA6, 0xFEA6, 0xFF21, 0xFF21,
+            0
+        };
+        ImFontConfig lumin_icon_config;
+        lumin_icon_config.MergeMode = false;
+        lumin_icon_config.PixelSnapH = true;
+        lumin_icon_config.FontDataOwnedByAtlas = false;
+        font::lumin_icon = io.Fonts->AddFontFromMemoryTTF(
+            (void*)lumin::fonts::icon_font, sizeof(lumin::fonts::icon_font), 15.f,
+            &lumin_icon_config, lumin_icon_ranges);
+
         F107 = io.Fonts->AddFontFromMemoryCompressedTTF((void*)font_awesome_data1, (int)font_awesome_size1, 25.0f, &iconsConfig, icons_ranges);
         F50 = io.Fonts->AddFontFromMemoryTTF((void *)F50_data, F50_size, 30.0f, NULL, io.Fonts->GetGlyphRangesDefault());
         if (!F107) F107 = font::inter_semibold;
@@ -1712,6 +1802,10 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
     io->DisplaySize = ImVec2((float)g_GlWidth, (float)g_GlHeight);
     ImGui_ImplOpenGL3_NewFrame();
     ImGui::NewFrame();
+
+    // Anti Leak: deferred to the game thread (never run from the JNI login
+    // callback) so the il2cpp field write can never take the process down.
+    ProcessAntiLeak();
 
     // Rename card / report spoof: keep the local player's own profile in sync with
     // the menu values (report spoof is applied last so its decoy identity wins).
@@ -1853,110 +1947,106 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
 
                 const ImVec2 login_size = ImVec2(640, 460);
 
-                // Zenin-styled auth glass: dark charcoal shell, red accent edge,
-                // rounded shield badge + single-tone wordmark. Same layout slots
-                // as before so every handler below keeps working.
-                {
-                    // Lumin-style shell: child-fill panel + soft accent glow
-                    // behind the brand mark, no left edge bar, glass border.
-                    draw->AddRectFilled(pos, pos + login_size, zenin::T::WindowBg, 12.0f);
-                    draw->AddRect(pos, pos + ImVec2(0.5f, 0.5f) + (login_size - ImVec2(0.5f, 0.5f)), IM_COL32(46, 46, 52, 150), 12.0f, 0, 1.0f);
+                // ══════════════════════════════════════════════════════════════
+                // LUMIN LOGIN
+                // Rebuilt from the eliwoahzja/Lumin framework (framework/gui.cpp
+                // "Login" tab + framework/widgets): a compact vertical stack of
+                // brand header, helper copy, license-key field, error row and the
+                // accent "Activate" button, all typeset with Lumin's own fonts.
+                // ══════════════════════════════════════════════════════════════
+                ImFont *mediumFont = font::lumin_medium ? font::lumin_medium : custom::shell::GetTextFont();
+                ImFont *titleFont  = custom::shell::GetTitleFont();
+                ImFont *luminIcon  = font::lumin_icon;
 
-                    // brand header: accent mark (rounded square w/ glow ring)
-                    // on the left, name + subtitle on the right — Lumin look.
+                auto drawTextL = [&](const char *txt, const ImVec2 &p, ImU32 col, float size) {
+                    if (mediumFont) draw->AddText(mediumFont, size, p, col, txt);
+                    else draw->AddText(p, col, txt);
+                };
+
+                // Lumin's license_key_icon(): a small accent key drawn with the
+                // draw list (the framework does the same, no glyph involved).
+                auto drawKeyIcon = [&](const ImVec2 &center, ImU32 col, float scale) {
+                    const ImVec2 k0(center.x - 4.0f * scale, center.y - 3.0f * scale);
+                    draw->AddCircle(k0, 5.0f * scale, col, 24, 1.7f * scale);
+                    draw->AddLine(ImVec2(k0.x + 4.0f * scale, k0.y + 4.0f * scale),
+                                  ImVec2(k0.x + 14.0f * scale, k0.y + 14.0f * scale), col, 1.7f * scale);
+                    draw->AddLine(ImVec2(k0.x + 10.0f * scale, k0.y + 10.0f * scale),
+                                  ImVec2(k0.x + 14.0f * scale, k0.y + 6.0f * scale), col, 1.5f * scale);
+                    draw->AddLine(ImVec2(k0.x + 13.0f * scale, k0.y + 13.0f * scale),
+                                  ImVec2(k0.x + 17.0f * scale, k0.y + 9.0f * scale), col, 1.5f * scale);
+                };
+
+                // ── Card shell (Lumin child fill + glass border) ──────────────
+                draw->AddRectFilled(pos, pos + login_size, zenin::T::WindowBg, 12.0f);
+                draw->AddRect(pos, pos + login_size, IM_COL32(42, 42, 48, 200), 12.0f, 0, 1.2f);
+                draw->AddRectFilled(pos, ImVec2(pos.x + login_size.x, pos.y + 3.0f),
+                                    zenin::T::Accent, 12.0f, ImDrawFlags_RoundCornersTop);
+
+                // ── brand_header("License access") ────────────────────────────
+                {
                     const float markX = pos.x + 26.0f;
-                    const float markY = pos.y + 22.0f;
-                    const float markS = 40.0f;
-                    draw->AddCircleFilled(ImVec2(markX + markS * 0.5f, markY + markS * 0.5f), markS * 0.68f,
-                                          IM_COL32(255, 90, 92, 34), 48);
-                    draw->AddRectFilled(ImVec2(markX, markY), ImVec2(markX + markS, markY + markS), IM_COL32(30, 30, 34, 255), 8.0f);
-                    draw->AddRectFilled(ImVec2(markX + 3, markY + 3), ImVec2(markX + markS - 3, markY + markS - 3), IM_COL32(255, 90, 92, 28), 7.0f);
+                    const float markY = pos.y + 24.0f;
+                    const float markS = 46.0f;
+                    const ImVec2 markC(markX + markS * 0.5f, markY + markS * 0.5f);
 
-                    ImFont* iconFont  = custom::shell::GetIconFont();
-                    if (iconFont) {
-                        const ImVec2 isz = custom::shell::MeasureText(iconFont, 19.0f, ICON_FA_KEY);
-                        draw->AddText(iconFont, 19.0f,
-                                      ImVec2(markX + (markS - isz.x) * 0.5f, markY + (markS - isz.y) * 0.5f),
-                                      zenin::T::Accent, ICON_FA_KEY);
-                    }
+                    draw->AddCircleFilled(markC, markS * 0.80f, IM_COL32(255, 90, 92, 30), 48);
+                    draw->AddRectFilled(ImVec2(markX, markY), ImVec2(markX + markS, markY + markS),
+                                        IM_COL32(28, 28, 32, 255), 12.0f);
+                    draw->AddRect(ImVec2(markX, markY), ImVec2(markX + markS, markY + markS),
+                                  IM_COL32(255, 90, 92, 90), 12.0f, 0, 1.2f);
+                    drawKeyIcon(markC, zenin::T::Accent, 1.15f);
 
-                    ImFont* titleFont = custom::shell::GetTitleFont();
-                    const char* name = "ZENIN";
-                    const char* sub  = "License access";
                     if (titleFont) {
-                        draw->AddText(titleFont, 19.0f, ImVec2(markX + markS + 12.0f, markY + 4.0f), zenin::T::Text, name);
-                        draw->AddText(titleFont, 12.0f, ImVec2(markX + markS + 12.0f, markY + 27.0f), zenin::T::TextMut, sub);
+                        draw->AddText(titleFont, 20.0f, ImVec2(markX + markS + 14.0f, markY + 5.0f),
+                                      zenin::T::Text, "ZENIN");
+                        drawTextL("LICENSE ACCESS", ImVec2(markX + markS + 15.0f, markY + 31.0f),
+                                  zenin::T::TextMut, 11.0f);
                     }
                 }
 
-                // All interactive rows below the chrome (logo block ends at y=166).
-                const float rowW = 480.0f;
-                const float rowH = 50.0f;
-                const float rowX = (login_size.x - rowW) * 0.5f;
+                // ── helper copy ───────────────────────────────────────────────
+                drawTextL("Enter your license key below to unlock the menu.",
+                          ImVec2(pos.x + 26.0f, pos.y + 94.0f), zenin::T::TextMut, 12.0f);
+                drawTextL("The key is checked against the license server.",
+                          ImVec2(pos.x + 26.0f, pos.y + 112.0f), IM_COL32(110, 110, 118, 255), 12.0f);
 
-                auto drawLoginButton = [&](const char* label, float y, float width) -> bool {
-                    const float buttonX = (login_size.x - width) * 0.5f;
-                    ImGui::SetCursorPos(ImVec2(buttonX, y));
-                    if (F50) ImGui::PushFont(F50);
-                    const bool pressed = ImGui::InvisibleButton(label, ImVec2(width, rowH));
-                    const bool hovered = ImGui::IsItemHovered();
-                    ImFont* labelFont = ImGui::GetFont();
-                    const float labelSize = ImGui::GetFontSize();
-                    if (F50) ImGui::PopFont();
+                // ── LICENSE KEY field (Lumin text_field) ──────────────────────
+                const float fieldX = pos.x + 26.0f;
+                const float fieldW = login_size.x - 52.0f;
+                const float fieldY = pos.y + 152.0f;
+                const float fieldH = 58.0f;
 
-                    const ImVec2 buttonMin = ImGui::GetItemRectMin();
-                    const ImVec2 buttonMax = ImGui::GetItemRectMax();
+                drawTextL("LICENSE KEY", ImVec2(fieldX + 2.0f, fieldY - 20.0f), zenin::T::TextMut, 11.0f);
+                draw->AddRectFilled(ImVec2(fieldX + 2.0f, fieldY - 5.0f),
+                                    ImVec2(fieldX + 46.0f, fieldY - 3.6f), zenin::T::Accent, 1.0f);
 
-                    // Zenin button: flat charcoal slab, red wash+edge when hot.
-                    draw->AddRectFilled(buttonMin, buttonMax,
-                                        hovered ? IM_COL32(46, 46, 52, 255) : IM_COL32(30, 30, 34, 255),
-                                        12.0f);
-                    if (hovered) {
-                        draw->AddRectFilled(buttonMin, buttonMax, zenin::T::AccentSoft, 12.0f);
-                        draw->AddRect(buttonMin, buttonMax, zenin::T::Accent, 12.0f, 0, 1.6f);
-                    }
-
-                    const float labelSizeUse = labelSize > 0.0f ? labelSize : 16.0f;
-                    const ImVec2 labelTextSize = (labelFont != nullptr)
-                        ? labelFont->CalcTextSizeA(labelSizeUse, FLT_MAX, 0.0f, label)
-                        : ImGui::CalcTextSize(label);
-                    const ImVec2 labelTextPos = ImVec2((buttonMin.x + buttonMax.x - labelTextSize.x) * 0.5f,
-                        (buttonMin.y + buttonMax.y - labelTextSize.y) * 0.5f);
-                    const ImU32 labelColor = hovered ? IM_COL32(255, 255, 255, 255) : zenin::T::Text;
-                    if (labelFont != nullptr) draw->AddText(labelFont, labelSizeUse, labelTextPos, labelColor, label);
-                    else draw->AddText(labelTextPos, labelColor, label);
-
-                    return pressed;
-                };
-
-                {
-                    const char* helperLine1 = "Enter your license key below. If the key";
-                    const char* helperLine2 = "is not valid you will not be logged in.";
-                    const float helperX = pos.x + (login_size.x - ImGui::CalcTextSize(helperLine1).x) * 0.5f;
-                    draw->AddText(ImVec2(helperX, pos.y + 176.0f), redesign::Theme::TextMut(), helperLine1);
-                    const float helper2X = pos.x + (login_size.x - ImGui::CalcTextSize(helperLine2).x) * 0.5f;
-                    draw->AddText(ImVec2(helper2X, pos.y + 196.0f), redesign::Theme::TextMut(), helperLine2);
-                }
-
-                const float inputWidth = 480.0f;
-                const float inputHeight = 54.0f;
-                const float inputX = (login_size.x - inputWidth) * 0.5f;
-                ImGui::SetCursorPos(ImVec2(inputX, 224.0f));
+                ImGui::SetCursorPos(ImVec2(fieldX - pos.x, fieldY - pos.y));
                 static const ImGui::AstralInputStyle loginInputStyle = {
-                    ImVec4(25.0f/255.0f, 25.0f/255.0f, 36.0f/255.0f, 1.0f),     // bg       (frame_layout)
-                    ImVec4(25.0f/255.0f, 25.0f/255.0f, 36.0f/255.0f, 1.0f),     // bgHovered
-                    ImVec4(25.0f/255.0f, 25.0f/255.0f, 36.0f/255.0f, 1.0f),     // bgActive
-                    ImVec4(39.0f/255.0f, 39.0f/255.0f, 58.0f/255.0f, 1.0f),     // border   (frame_border)
-                    ImVec4(39.0f/255.0f, 39.0f/255.0f, 58.0f/255.0f, 1.0f),     // borderActive
-                    ImVec4(60.0f/255.0f, 60.0f/255.0f, 83.0f/255.0f, 1.0f),     // hint     (text_inactive)
-                    ImVec4(255.0f/255.0f, 255.0f/255.0f, 255.0f/255.0f, 1.0f),  // text
-                    ImVec4(189.0f/255.0f, 189.0f/255.0f, 255.0f/255.0f, 1.0f),  // accent   (periwinkle)
-                    6.0f                                                        // rounding
+                    ImVec4(25.0f/255.0f, 25.0f/255.0f, 30.0f/255.0f, 1.0f),     // bg
+                    ImVec4(30.0f/255.0f, 30.0f/255.0f, 36.0f/255.0f, 1.0f),     // bgHovered
+                    ImVec4(32.0f/255.0f, 32.0f/255.0f, 38.0f/255.0f, 1.0f),     // bgActive
+                    ImVec4(52.0f/255.0f, 52.0f/255.0f, 60.0f/255.0f, 1.0f),     // border
+                    ImVec4(255.0f/255.0f, 90.0f/255.0f, 92.0f/255.0f, 1.0f),    // borderActive (lumin accent)
+                    ImVec4(96.0f/255.0f, 96.0f/255.0f, 104.0f/255.0f, 1.0f),    // hint
+                    ImVec4(240.0f/255.0f, 240.0f/255.0f, 244.0f/255.0f, 1.0f),  // text
+                    ImVec4(255.0f/255.0f, 90.0f/255.0f, 92.0f/255.0f, 1.0f),    // accent
+                    10.0f                                                       // rounding
                 };
-                ImGui::AstralInput("##key_login", s, sizeof(s), ImVec2(inputWidth, inputHeight), &loginInputStyle);
+                ImGui::AstralInput("##key_login", s, sizeof(s), ImVec2(fieldW, fieldH), &loginInputStyle);
                 bool loginInputClicked = ImGui::IsItemClicked();
                 bool loginInputActive = ImGui::IsItemActive();
                 bool loginInputHovered = ImGui::IsItemHovered();
+
+                // key glyph + separator inside the field (lumin text_field icon slot)
+                {
+                    const ImVec2 fieldMin = ImGui::GetItemRectMin();
+                    const ImVec2 fieldMax = ImGui::GetItemRectMax();
+                    drawKeyIcon(ImVec2(fieldMin.x + 26.0f, fieldMin.y + fieldH * 0.5f),
+                                zenin::T::Accent, 0.95f);
+                    draw->AddLine(ImVec2(fieldMin.x + 52.0f, fieldMin.y + 10.0f),
+                                  ImVec2(fieldMin.x + 52.0f, fieldMax.y - 10.0f),
+                                  IM_COL32(58, 58, 66, 220), 1.0f);
+                }
 
                 if (loginInputClicked || loginInputActive) showKeyboard = true;
 
@@ -1967,43 +2057,87 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                     if (ImGui::GetMousePos().y > screenHeight - keyboardHeight) showKeyboard = false;
                 }
 
-                if (drawLoginButton("PASTE", 292.0f, 200.0f)) {
-                    auto key = getClipboard();
-                    strncpy(s, key.c_str(), sizeof(s) - 1);
-                    s[sizeof(s) - 1] = '\0';
+                // ── error row (Lumin license_error_message) ───────────────────
+                {
+                    const float errorY = pos.y + 220.0f;
+                    std::string statusMsg = err;
+                    if (err.empty() && !g_licenseErrorMsg.empty())
+                        statusMsg = g_licenseErrorMsg;
+                    if (!statusMsg.empty() && statusMsg != "OK") {
+                        const ImVec2 eMin(fieldX, errorY);
+                        draw->AddRectFilled(eMin, ImVec2(eMin.x + fieldW, eMin.y + 26.0f),
+                                            IM_COL32(255, 90, 92, 26), 8.0f);
+                        // Lumin draws the key badge here; we swap in the uicons
+                        // warning glyph from the framework's icon font.
+                        if (luminIcon) {
+                            const char warn[] = { (char)0xE2, (char)0x9A, (char)0xA0, 0 }; // U+26A0
+                            const ImVec2 wsz = luminIcon->CalcTextSizeA(13.0f, FLT_MAX, 0.0f, warn);
+                            draw->AddText(luminIcon, 13.0f,
+                                          ImVec2(eMin.x + 10.0f, eMin.y + (26.0f - wsz.y) * 0.5f),
+                                          zenin::T::Accent, warn);
+                        }
+                        const std::string msg = statusMsg;
+                        drawTextL(msg.c_str(), ImVec2(eMin.x + 30.0f, eMin.y + 5.0f),
+                                  IM_COL32(255, 140, 142, 255), 13.0f);
+                    } else if (g_loginInFlight) {
+                        drawTextL("Please wait, account verification",
+                                  ImVec2(fieldX, errorY + 4.0f), zenin::T::TextMut, 13.0f);
+                        const float spin = (float)ImGui::GetTime() * 3.0f;
+                        const ImVec2 sc(fieldX + fieldW - 16.0f, errorY + 17.0f);
+                        draw->PathClear();
+                        for (int i = 0; i <= 12; ++i) {
+                            const float a = spin + (float)i / 12.0f * 6.28318f;
+                            draw->PathLineTo(ImVec2(sc.x + std::cos(a) * 9.0f, sc.y + std::sin(a) * 9.0f));
+                        }
+                        draw->PathStroke(zenin::T::Accent, 0, 2.0f);
+                    }
                 }
 
-                // Lumin primary button: accent-filled slab, soft glow shadow,
-                // decaying shake while invalid, label centred in black.
+                // ── primary "Activate" button (Lumin primary_button) ──────────
+                auto drawSecondaryButton = [&](const char *label, const ImVec2 &bMin, const ImVec2 &bMax) -> bool {
+                    ImGui::SetCursorScreenPos(bMin);
+                    const bool pressed = ImGui::InvisibleButton(label, ImVec2(bMax.x - bMin.x, bMax.y - bMin.y));
+                    const bool hovered = ImGui::IsItemHovered();
+                    draw->AddRectFilled(bMin, bMax,
+                                        hovered ? IM_COL32(46, 46, 52, 255) : IM_COL32(32, 32, 36, 255),
+                                        10.0f);
+                    draw->AddRect(bMin, bMax,
+                                  hovered ? zenin::T::Accent : IM_COL32(58, 58, 66, 220), 10.0f, 0, 1.2f);
+                    const float fs = 13.0f;
+                    const ImVec2 ts = mediumFont ? mediumFont->CalcTextSizeA(fs, FLT_MAX, 0.0f, label)
+                                                 : ImGui::CalcTextSize(label);
+                    const ImVec2 tp((bMin.x + bMax.x - ts.x) * 0.5f, (bMin.y + bMax.y - ts.y) * 0.5f);
+                    drawTextL(label, tp, hovered ? IM_COL32(255, 255, 255, 255) : zenin::T::Text, fs);
+                    return pressed;
+                };
+
                 {
-                    const float btnY = 360.0f, btnW = 480.0f, btnH = 50.0f;
+                    const float btnW = fieldW;
+                    const float btnH = 56.0f;
                     const float shake = g_licenseInvalid
                         ? std::sin(g_licenseInvalidTimer * 48.0f) * 5.0f *
                           (1.0f - ImClamp(g_licenseInvalidTimer / 0.8f, 0.0f, 1.0f))
                         : 0.0f;
-                    const float btnX = (login_size.x - btnW) * 0.5f;
-                    ImGui::SetCursorPos(ImVec2(btnX, btnY));
-                    if (F50) ImGui::PushFont(F50);
+                    const ImVec2 bMin(fieldX + shake, pos.y + 262.0f);
+                    const ImVec2 bMax(bMin.x + btnW, bMin.y + btnH);
+
+                    ImGui::SetCursorScreenPos(bMin);
                     const bool pressed = ImGui::InvisibleButton("##login_activate", ImVec2(btnW, btnH));
                     const bool hovered = ImGui::IsItemHovered();
-                    ImFont* labelFont = ImGui::GetFont();
-                    const float labelSize = ImGui::GetFontSize();
-                    if (F50) ImGui::PopFont();
 
-                    const ImVec2 bmin = ImGui::GetItemRectMin();
-                    const ImVec2 bmax = ImGui::GetItemRectMax();
+                    // soft accent glow (Lumin primary_button shadow)
+                    draw->AddRectFilled(ImVec2(bMin.x + 10.0f, bMin.y + 9.0f), ImVec2(bMax.x - 10.0f, bMax.y + 9.0f),
+                                        IM_COL32(255, 90, 92, 38), 16.0f);
+                    const ImU32 slab = g_loginInFlight ? IM_COL32(196, 72, 74, 255)
+                                      : (hovered ? IM_COL32(255, 108, 110, 255) : zenin::T::Accent);
+                    draw->AddRectFilled(bMin, bMax, slab, 12.0f);
 
-                    // soft accent glow under the button
-                    draw->AddRectFilled(bmin + ImVec2(8, 8), bmax - ImVec2(-8, 0), IM_COL32(255, 90, 92, 40), 18.0f);
-                    // accent slab (dimmer while in-flight so it reads disabled-ish)
-                    const ImU32 slab = g_loginInFlight ? IM_COL32(214, 76, 78, 255) : zenin::T::Accent;
-                    draw->AddRectFilled(bmin, bmax, slab, 11.0f);
-
-                    const char* label = g_licenseErrorMsg.empty() ? "ACTIVATE" : g_licenseErrorMsg.c_str();
-                    const float labelSizeUse = labelSize > 0.0f ? labelSize : 16.0f;
-                    const ImVec2 lt = labelFont ? labelFont->CalcTextSizeA(labelSizeUse, FLT_MAX, 0.0f, label) : ImGui::CalcTextSize(label);
-                    const ImVec2 lpos((bmin.x + bmax.x - lt.x) * 0.5f + shake, (bmin.y + bmax.y - lt.y) * 0.5f);
-                    if (labelFont) draw->AddText(labelFont, labelSizeUse, lpos, IM_COL32(20, 16, 16, 255), label);
+                    const char *label = "ACTIVATE LICENSE";
+                    const float fs = 15.0f;
+                    const ImVec2 ts = mediumFont ? mediumFont->CalcTextSizeA(fs, FLT_MAX, 0.0f, label)
+                                                 : ImGui::CalcTextSize(label);
+                    drawTextL(label, ImVec2((bMin.x + bMax.x - ts.x) * 0.5f, (bMin.y + bMax.y - ts.y) * 0.5f),
+                              IM_COL32(22, 16, 16, 255), fs);
 
                     if (pressed) {
                         if (g_loginInFlight) {
@@ -2018,29 +2152,27 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                     }
                 }
 
-                // Show a progress/loading state while the in-flight login is running.
-                if (g_loginInFlight) {
-                    const float elapsed = ImGui::GetTime() - g_loginStart;
-                    std::string dots = ".";
-                    for (int i = 0; i < (int)std::fmod(elapsed * 3.0f, 3.0f); ++i) dots += ".";
-                    ImGui::PushFont(F50);
-                    ImGui::SetCursorPos(ImVec2(30, 418.0f));
-                    ImGui::TextColored(ImVec4(0.56f, 0.56f, 0.62f, 1.0f), "Authorizing...");
-                    ImGui::PopFont();
-                    // Keep this line inside the 460px login window: the previous
-                    // layout drew it at y=462 where it was completely clipped away.
-                    ImGui::SetCursorPos(ImVec2(30.0f, 446.0f));
-                    ImGui::TextColored(ImVec4(0.42f, 0.42f, 0.47f, 1.0f),
-                                       "Verifying license key%s", dots.c_str());
-
-                    // Keep keyboard dismissal working so the user isn't stuck behind an
-                    // open keyboard while we wait for the server round-trip.
-                    if (showKeyboard && !loginInputActive && !loginInputHovered && ImGui::IsMouseClicked(0)) {
-                        ImGuiIO& io = ImGui::GetIO();
-                        float screenHeight = io.DisplaySize.y;
-                        float keyboardHeight = screenHeight * 0.60f;
-                        if (ImGui::GetMousePos().y > screenHeight - keyboardHeight) showKeyboard = false;
+                // ── secondary actions ─────────────────────────────────────────
+                {
+                    const float secW = (fieldW - 12.0f) * 0.5f;
+                    const float secY = pos.y + 336.0f;
+                    if (drawSecondaryButton("PASTE KEY", ImVec2(fieldX, secY),
+                                            ImVec2(fieldX + secW, secY + 44.0f))) {
+                        auto key = getClipboard();
+                        strncpy(s, key.c_str(), sizeof(s) - 1);
+                        s[sizeof(s) - 1] = '\0';
                     }
+                    if (drawSecondaryButton("CLEAR", ImVec2(fieldX + secW + 12.0f, secY),
+                                            ImVec2(fieldX + fieldW, secY + 44.0f))) {
+                        s[0] = '\0';
+                        showKeyboard = false;
+                    }
+                }
+
+                // ── in-flight / result handling ───────────────────────────────
+                if (g_loginInFlight) {
+                    ImGui::SetCursorPos(ImVec2(26.0f, 392.0f));
+                    ImGui::TextColored(ImVec4(0.56f, 0.56f, 0.62f, 1.0f), "Authorizing...");
                 }
 
                 // When the in-flight login completes, act on the result.
@@ -2055,29 +2187,18 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                         SaveLoginTextToFile(s);
                         g_LoginTextLoaded = true;
                         err.clear();
-                        // WALANG LOADING — deretso sa pizza menu
                         isLogin = true;
                         g_ShowRadialMenu = true;
                         ApplyForbidKickOffOnLogin();
                     }
                 }
 
-                // Lumin status line: accent key icon + red message just under
-                // the Activate button, inside the card.
+                // ── footer status line ────────────────────────────────────────
                 {
-                    std::string statusMsg = err;
-                    if (err.empty() && !g_licenseErrorMsg.empty())
-                        statusMsg = g_licenseErrorMsg;
-                    if (!statusMsg.empty() && statusMsg != "OK") {
-                        const float rowY = 418.0f;
-                        const float rowX = (login_size.x - 480.0f) * 0.5f;
-                        draw->AddCircleFilled(ImVec2(rowX + 8.0f, rowY + 12.0f), 5.0f, zenin::T::Accent, 24);
-                        draw->AddLine(ImVec2(rowX + 8.0f, rowY + 12.0f), ImVec2(rowX + 18.0f, rowY + 12.0f), zenin::T::Accent, 1.4f);
-                        draw->AddLine(ImVec2(rowX + 13.0f, rowY + 12.0f), ImVec2(rowX + 13.0f, rowY + 16.0f), zenin::T::Accent, 1.4f);
-                        const std::string msg = "Error: " + statusMsg;
-                        ImFont* tf = font::inter_semibold ? font::inter_semibold : ImGui::GetFont();
-                        draw->AddText(tf, 14.0f, ImVec2(rowX + 26.0f, rowY + 4.0f), IM_COL32(255, 120, 122, 255), msg.c_str());
-                    }
+                    draw->AddLine(ImVec2(fieldX, pos.y + 426.0f), ImVec2(fieldX + fieldW, pos.y + 426.0f),
+                                  IM_COL32(44, 44, 50, 200), 1.0f);
+                    drawTextL("single key / single device - do not share",
+                              ImVec2(fieldX, pos.y + 434.0f), IM_COL32(96, 96, 104, 255), 11.0f);
                 }
 
                 // Advance the invalid-shake decay timer (Lumin license_invalid).
@@ -2101,20 +2222,9 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
             // g_ShowRadialMenu == true  → PIZZA menu lang nakikita
             // g_ShowRadialMenu == false → CONTENT box lang nakikita
             // ================================================================
-            if (g_ShowRadialMenu)
-            {
-                // ---------- HUB LAUNCHER (exclusive) ----------
-                static bool loggedWheelFirstFrame = false;
-                if (!loggedWheelFirstFrame) { loggedWheelFirstFrame = true; LOGI("ui: hub first frame"); }
-                int picked = zenin::RenderZeninHub(viewportCenter);
-                if (picked >= 1 && picked <= 6) {
-                    page = picked;
-                    activeTab = picked;
-                    zenin::g_zeninHubSel = picked;
-                    g_ShowRadialMenu = false;
-                }
-            }
-            else
+            // The floating hub launcher is gone. Every category is now a tab in
+            // the menu window's own sidebar, so the content box is always shown
+            // once the login succeeds -- no separate floating GUI to drag.
             {
                 // ---------- CONTENT BOX (exclusive) ----------
                 static bool loggedContentFirstFrame = false;
@@ -2178,125 +2288,170 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                             zenin::T::Accent, zenin::T::RWindow, ImDrawFlags_RoundCornersTop);
 runtimeDrawList->AddRectFilledMultiColor(runtimeWindowPos, ImVec2(runtimeWindowPos.x + runtimeWindowSize.x, runtimeWindowPos.y + 110.0f), IM_COL32(24, 24, 26, 210), IM_COL32(24, 24, 26, 0), IM_COL32(0, 0, 0, 0), IM_COL32(0, 0, 0, 0));
 
-                        const float outerPad = 14.0f;
-                        const float layoutGap = 8.0f;
-                        const float contentPadding = 10.0f;
-                        const float columnGap = 10.0f;
-                        const float headerHeight = 64.0f;
-                        const float closeHeaderWidth = 72.0f;
+                        // ── Layout ──────────────────────────────────────────────
+                        // Ported from the eliwoahzja/imgui reference menu: a
+                        // full-width top bar, a left page rail holding every
+                        // category as a tab, and the content container on the
+                        // right. The old centred floating hub is gone.
+                        const float topbarHeight   = 60.0f;
+                        const float sidebarWidth   = 178.0f;
+                        const float railPad        = 12.0f;
+                        const float gap            = 12.0f;
+                        const float contentPadding = 12.0f;
+                        const float columnGap      = 10.0f;
 
-                        // WALANG SIDEBAR — full width
-                        const float contentLeft  = runtimeWindowPos.x + outerPad;
-                        const float contentRight = runtimeWindowPos.x + runtimeWindowSize.x - outerPad;
-                        const float headerTop = runtimeWindowPos.y + outerPad;
-                        const float headerWidth = contentRight - contentLeft;
-                        const float headerMainWidth = ImMax(0.0f, headerWidth - closeHeaderWidth - layoutGap);
-                        const ImVec2 headerMin(contentLeft, headerTop);
-                        const ImVec2 headerMax(contentLeft + headerMainWidth, headerTop + headerHeight);
-                        const ImVec2 closeCardMin(headerMax.x + layoutGap, headerTop);
-                        const ImVec2 closeCardSize(closeHeaderWidth, headerHeight);
+                        const float cardLeft   = runtimeWindowPos.x;
+                        const float cardTop    = runtimeWindowPos.y;
+                        const float cardRight  = runtimeWindowPos.x + runtimeWindowSize.x;
+                        const float cardBottom = runtimeWindowPos.y + runtimeWindowSize.y;
 
-                        const ImVec2 hostMin(contentLeft, headerTop + headerHeight + layoutGap);
-                        const ImVec2 hostMax(contentRight, runtimeWindowPos.y + runtimeWindowSize.y - outerPad);
-                        const ImVec2 contentInnerMin(hostMin.x + contentPadding, hostMin.y + contentPadding);
-                        const ImVec2 contentInnerSize(ImMax(0.0f, (hostMax.x - hostMin.x) - contentPadding * 2.0f), ImMax(0.0f, (hostMax.y - hostMin.y) - contentPadding * 2.0f));
+                        const ImVec2 topbarMin(cardLeft, cardTop);
+                        const ImVec2 topbarMax(cardRight, cardTop + topbarHeight);
+
+                        const float sidebarTop   = cardTop + topbarHeight;
+                        const float sidebarLeft  = cardLeft + railPad;
+                        const float sidebarRight = sidebarLeft + sidebarWidth;
+
+                        const ImVec2 hostMin(sidebarRight + gap, sidebarTop + gap);
+                        const ImVec2 hostMax(cardRight - gap, cardBottom - gap);
+                        const float containerHeaderH = 30.0f;
+                        const ImVec2 contentInnerMin(hostMin.x + contentPadding,
+                                                     hostMin.y + containerHeaderH + contentPadding);
+                        const ImVec2 contentInnerSize(ImMax(0.0f, (hostMax.x - hostMin.x) - contentPadding * 2.0f),
+                                                      ImMax(0.0f, (hostMax.y - hostMin.y) - containerHeaderH - contentPadding * 2.0f));
 
                         runtimeState.page = ImClamp(runtimeState.page, 1, 6);
                         runtimeState.activeTab = ImClamp(runtimeState.activeTab, 1, 6);
 
-                        runtimeDrawList->AddRectFilled(headerMin, headerMax, IM_COL32(22, 22, 25, 245), 12.0f);
-                        runtimeDrawList->AddRect(headerMin, headerMax, IM_COL32(42, 42, 48, 200), 12.0f, 0, 1.0f);
-                        // thin accent divider along the header bottom, zenin red
-                        runtimeDrawList->AddRectFilled(
-                            ImVec2(headerMin.x + 14.0f, headerMax.y - 3.0f),
-                            ImVec2(headerMax.x - 14.0f, headerMax.y - 1.5f),
-                            zenin::T::Accent, 1.5f);
+                        // ── Top bar ─────────────────────────────────────────────
+                        runtimeDrawList->AddRectFilled(topbarMin, topbarMax, IM_COL32(13, 13, 15, 255),
+                                                        zenin::T::RWindow, ImDrawFlags_RoundCornersTop);
+                        runtimeDrawList->AddLine(ImVec2(cardLeft, topbarMax.y), ImVec2(cardRight, topbarMax.y),
+                                                 zenin::T::Accent, 1.6f);
 
-                        const ImVec2 flameCenter(headerMin.x + 28.0f, headerMin.y + headerHeight * 0.5f);
-                        runtimeDrawList->AddCircleFilled(flameCenter, 18.0f, IM_COL32(24, 24, 24, 255), 28);
+                        const ImVec2 markCenter(cardLeft + 38.0f, cardTop + topbarHeight * 0.5f);
+                        runtimeDrawList->AddCircleFilled(markCenter, 18.0f, IM_COL32(24, 24, 26, 255), 32);
+                        runtimeDrawList->AddCircle(markCenter, 18.0f, zenin::T::Accent, 32, 1.4f);
                         {
                             ImFont *iconFont = custom::shell::GetIconFont();
                             const char *logoIcon = ICON_FA_FIRE;
                             const ImVec2 logoSize = custom::shell::MeasureText(iconFont, 17.0f, logoIcon);
-                            runtimeDrawList->AddText(iconFont, 17.0f, ImVec2(flameCenter.x - logoSize.x * 0.5f, flameCenter.y - logoSize.y * 0.5f), main_runtime_theme::GetAccentU32(), logoIcon);
+                            if (iconFont)
+                                runtimeDrawList->AddText(iconFont, 17.0f,
+                                    ImVec2(markCenter.x - logoSize.x * 0.5f, markCenter.y - logoSize.y * 0.5f),
+                                    zenin::T::Accent, logoIcon);
                         }
 
                         ImFont *runtimeTitleFont = custom::shell::GetTitleFont();
-                        const float runtimeTitleSize = 22.0f;
-                        const char *titleA = "zenin";
-                        const char *titleB = " | ethnir noir v3";
+                        const float runtimeTitleSize = 20.0f;
+                        const char *titleA = "ZENIN";
+                        const char *titleB = " | ETHNIR NOIR V3";
                         const ImVec2 titleASize = runtimeTitleFont->CalcTextSizeA(runtimeTitleSize, FLT_MAX, 0.0f, titleA);
-                        runtimeDrawList->AddText(runtimeTitleFont, runtimeTitleSize, ImVec2(headerMin.x + 56.0f, headerMin.y + 11.0f), IM_COL32(235, 235, 235, 255), titleA);
-                        runtimeDrawList->AddText(runtimeTitleFont, runtimeTitleSize, ImVec2(headerMin.x + 56.0f + titleASize.x, headerMin.y + 11.0f), main_runtime_theme::GetAccentU32(), titleB);
+                        runtimeDrawList->AddText(runtimeTitleFont, runtimeTitleSize,
+                            ImVec2(cardLeft + 66.0f, cardTop + 11.0f), IM_COL32(236, 236, 240, 255), titleA);
+                        runtimeDrawList->AddText(runtimeTitleFont, runtimeTitleSize,
+                            ImVec2(cardLeft + 66.0f + titleASize.x, cardTop + 11.0f), zenin::T::Accent, titleB);
 
-                        static const char* catNames[] = { "VISUAL", "COMBAT", "MEMORY", "SKINS", "MISC", "SETTINGS" };
+                        static const char *catNames[] = { "VISUAL", "COMBAT", "MEMORY", "SKINS", "MISC", "SETTINGS" };
                         char currentCat[64];
                         snprintf(currentCat, sizeof(currentCat), "current: %s", catNames[runtimeState.activeTab - 1]);
-                        const ImVec2 subtitlePos(headerMin.x + 57.0f, headerMin.y + 38.0f);
-                        runtimeDrawList->AddText(runtimeTitleFont, 10.0f, subtitlePos, IM_COL32(142, 142, 148, 235), currentCat);
+                        runtimeDrawList->AddText(runtimeTitleFont, 10.0f,
+                            ImVec2(cardLeft + 67.0f, cardTop + 36.0f), IM_COL32(138, 138, 146, 235), currentCat);
 
-                        // ============================================
-                        // HEADER BUTTONS — BACK / SAVE / HIDE
-                        // ============================================
-                        const float hBtnW = 76.0f;
+                        // Header actions: BACK / SAVE / HIDE, right aligned before
+                        // the round power button.
+                        const float hBtnW = 74.0f;
                         const float hBtnH = 34.0f;
-                        const float hBtnGap = 5.0f;
-                        const float hBtnY = headerTop + 15.0f;
-
+                        const float hBtnGap = 6.0f;
+                        const float hBtnY = cardTop + (topbarHeight - hBtnH) * 0.5f;
                         const float hGroupW = hBtnW * 3.0f + hBtnGap * 2.0f;
-                        const float hGroupStartX = headerMax.x - hGroupW - 4.0f;
+                        const float hGroupStartX = cardRight - 58.0f - hGroupW;
 
-                        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+                        ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 6.0f);
                         ImGui::PushStyleVar(ImGuiStyleVar_FrameBorderSize, 1.0f);
 
-                        // --- BACK TO PIZZA ---
-                        ImGui::SetCursorScreenPos(ImVec2(hGroupStartX, hBtnY));
-                        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.094f, 0.094f, 0.094f, 0.95f));
-                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.122f, 0.122f, 0.122f, 1.00f));
-                        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.176f, 0.176f, 0.176f, 1.00f));
-                        ImGui::PushStyleColor(ImGuiCol_Border,        ImVec4(0.141f, 0.141f, 0.141f, 1.00f));
-                        ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.804f, 0.804f, 0.824f, 1.00f));
-                        if (ImGui::Button("<- BACK", ImVec2(hBtnW, hBtnH))) {
-                            g_ShowRadialMenu = true;
+                        auto headerButton = [&](const char *label, const ImVec2 &pos, const ImVec2 &size, const char *tip) -> bool {
+                            ImGui::SetCursorScreenPos(pos);
+                            ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.141f, 0.141f, 0.149f, 0.95f));
+                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.196f, 0.196f, 0.208f, 1.00f));
+                            ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.247f, 0.247f, 0.259f, 1.00f));
+                            ImGui::PushStyleColor(ImGuiCol_Border,        ImVec4(0.278f, 0.278f, 0.290f, 1.00f));
+                            ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.878f, 0.878f, 0.894f, 1.00f));
+                            const bool pressed = ImGui::Button(label, size);
+                            if (tip != nullptr && ImGui::IsItemHovered()) ImGui::SetTooltip("%s", tip);
+                            ImGui::PopStyleColor(5);
+                            return pressed;
+                        };
+
+                        if (headerButton("<- BACK", ImVec2(hGroupStartX, hBtnY), ImVec2(hBtnW, hBtnH),
+                                         "Back to the login screen")) {
+                            // There is no floating hub to go back to any more;
+                            // BACK returns to the license screen.
+                            isLogin = false;
+                            showKeyboard = false;
                         }
-                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Back to Pizza Menu");
-                        ImGui::PopStyleColor(5);
-
-                        ImGui::SameLine(0.0f, hBtnGap);
-
-                        // --- SAVE ---
-                        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.094f, 0.094f, 0.094f, 0.95f));
-                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.122f, 0.122f, 0.122f, 1.00f));
-                        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.176f, 0.176f, 0.176f, 1.00f));
-                        ImGui::PushStyleColor(ImGuiCol_Border,        ImVec4(0.141f, 0.141f, 0.141f, 1.00f));
-                        ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.804f, 0.804f, 0.824f, 1.00f));
-                        if (ImGui::Button("SAVE", ImVec2(hBtnW, hBtnH))) {
-                            SaveConfiguration("astavex_config");
-                            SaveConfig();
-                        }
-                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Save Configuration");
-                        ImGui::PopStyleColor(5);
-
-                        ImGui::SameLine(0.0f, hBtnGap);
-
-                        // --- HIDE ---
-                        ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.094f, 0.094f, 0.094f, 0.95f));
-                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.122f, 0.122f, 0.122f, 1.00f));
-                        ImGui::PushStyleColor(ImGuiCol_ButtonActive,  ImVec4(0.176f, 0.176f, 0.176f, 1.00f));
-                        ImGui::PushStyleColor(ImGuiCol_Border,        ImVec4(0.141f, 0.141f, 0.141f, 1.00f));
-                        ImGui::PushStyleColor(ImGuiCol_Text,          ImVec4(0.804f, 0.804f, 0.824f, 1.00f));
-                        if (ImGui::Button("HIDE", ImVec2(hBtnW, hBtnH))) {
+                        headerButton("SAVE", ImVec2(hGroupStartX + hBtnW + hBtnGap, hBtnY), ImVec2(hBtnW, hBtnH),
+                                     "Save configuration");
+                        if (headerButton("HIDE", ImVec2(hGroupStartX + (hBtnW + hBtnGap) * 2.0f, hBtnY), ImVec2(hBtnW, hBtnH),
+                                         "Hide (double-tap the top middle to restore)")) {
                             windowCollapsed = true;
                             isMenuVisible = false;
-                            g_ShowRadialMenu = false;
                         }
-                        if (ImGui::IsItemHovered()) ImGui::SetTooltip("Hide (double-tap top middle to restore)");
-                        ImGui::PopStyleColor(5);
 
                         ImGui::PopStyleVar(2);
 
-                        if (custom::shell::DrawCloseCard(closeCardMin, closeCardSize)) {
-                            runtime_preview_menu::CollapseMenu(runtimeState);
+                        // Round power button (closes the menu card).
+                        {
+                            const ImVec2 closeCenter(cardRight - 32.0f, cardTop + topbarHeight * 0.5f);
+                            ImGui::SetCursorScreenPos(ImVec2(closeCenter.x - 16.0f, closeCenter.y - 16.0f));
+                            const bool closePressed = ImGui::InvisibleButton("##menu_close", ImVec2(32.0f, 32.0f));
+                            const bool closeHovered = ImGui::IsItemHovered();
+                            runtimeDrawList->AddCircle(closeCenter, 15.0f,
+                                closeHovered ? zenin::T::Accent : IM_COL32(72, 72, 80, 255), 32, 1.6f);
+                            ImFont *iconFont = custom::shell::GetIconFont();
+                            if (iconFont) {
+                                const ImVec2 gsz = custom::shell::MeasureText(iconFont, 13.0f, ICON_FA_POWER_OFF);
+                                runtimeDrawList->AddText(iconFont, 13.0f,
+                                    ImVec2(closeCenter.x - gsz.x * 0.5f, closeCenter.y - gsz.y * 0.5f),
+                                    closeHovered ? zenin::T::Accent : IM_COL32(170, 170, 178, 255), ICON_FA_POWER_OFF);
+                            }
+                            if (closePressed)
+                                runtime_preview_menu::CollapseMenu(runtimeState);
+                        }
+
+                        // ── Left page rail: every category is a tab here ────────
+                        {
+                            static const char *pageIcons[6] = {
+                                ICON_FA_EYE, ICON_FA_CROSSHAIRS, ICON_FA_MICROCHIP,
+                                ICON_FA_PALETTE, ICON_FA_MAGIC, ICON_FA_COG
+                            };
+                            static const char *pageLabels[6] = {
+                                "VISUAL", "COMBAT", "MEMORY", "SKINS", "MISC", "SETTINGS"
+                            };
+
+                            const float rowH = 40.0f;
+                            const float rowGap = 6.0f;
+                            float ry = sidebarTop + 14.0f;
+
+                            runtimeDrawList->AddText(runtimeTitleFont, 10.0f,
+                                ImVec2(sidebarLeft + 6.0f, ry - 4.0f), IM_COL32(110, 110, 118, 255), "MENU");
+                            ry += 16.0f;
+
+                            for (int i = 0; i < 6; ++i) {
+                                ImGui::SetCursorScreenPos(ImVec2(sidebarLeft, ry));
+                                if (DrawSidebarPage(pageLabels[i], pageIcons[i], pageLabels[i],
+                                                    runtimeState.activeTab == (i + 1), ImVec2(sidebarWidth, rowH))) {
+                                    runtimeState.page = i + 1;
+                                }
+                                ry += rowH + rowGap;
+                            }
+
+                            runtimeDrawList->AddRectFilled(ImVec2(sidebarLeft + 6.0f, cardBottom - 46.0f),
+                                                           ImVec2(sidebarRight - 6.0f, cardBottom - 44.0f),
+                                                           IM_COL32(48, 48, 54, 200), 1.0f);
+                            runtimeDrawList->AddText(runtimeTitleFont, 10.0f,
+                                ImVec2(sidebarLeft + 6.0f, cardBottom - 38.0f),
+                                IM_COL32(110, 110, 118, 255), "ethnir noir v3");
                         }
 
                         runtimeState.tabAlpha = ImClamp(runtimeState.tabAlpha + (4.0f * ImGui::GetIO().DeltaTime * (runtimeState.page == runtimeState.activeTab ? 1.0f : -1.0f)), 0.0f, 1.0f);
@@ -2304,6 +2459,22 @@ runtimeDrawList->AddRectFilledMultiColor(runtimeWindowPos, ImVec2(runtimeWindowP
 
                         runtimeDrawList->AddRectFilled(hostMin, hostMax, IM_COL32(24, 24, 27, 245), 12.0f);
                         runtimeDrawList->AddRect(hostMin, hostMax, IM_COL32(40, 40, 46, 190), 12.0f, 0, 1.0f);
+
+                        // Container header: category name + accent underline.
+                        {
+                            ImFont *sectionFont = custom::shell::GetTitleFont();
+                            const char *sectionName = catNames[runtimeState.activeTab - 1];
+                            if (sectionFont) {
+                                const ImVec2 ssz = sectionFont->CalcTextSizeA(15.0f, FLT_MAX, 0.0f, sectionName);
+                                runtimeDrawList->AddText(sectionFont, 15.0f,
+                                    ImVec2(hostMin.x + contentPadding, hostMin.y + 8.0f),
+                                    IM_COL32(236, 236, 240, 255), sectionName);
+                                runtimeDrawList->AddRectFilled(
+                                    ImVec2(hostMin.x + contentPadding, hostMin.y + 8.0f + ssz.y + 2.0f),
+                                    ImVec2(hostMin.x + contentPadding + ssz.x, hostMin.y + 8.0f + ssz.y + 3.5f),
+                                    zenin::T::Accent, 2.0f);
+                            }
+                        }
 
                         ImGui::SetCursorScreenPos(contentInnerMin);
                         ImGui::BeginChild("##RuntimeContentHost", contentInnerSize, false, ImGuiWindowFlags_NoBackground);
@@ -2406,10 +2577,17 @@ runtimeDrawList->AddRectFilledMultiColor(runtimeWindowPos, ImVec2(runtimeWindowP
                                     static const char *hitGroups[] = {"Auto", "Head", "Hand", "Body", "Foot", "Weak Point", "Neck"};
                                     custom::Combo("Hit Group", &Config.Aim.HitGroup, hitGroups, IM_ARRAYSIZE(hitGroups), -1);
 
-                                    custom::Checkbox("A-Fire", &Config.ExtraMenu.A_Fire);
+                                    // Triggerbot ("A-Fire"). Rewritten so it actually fires:
+                                    // the enemy only has to be inside a generous crosshair zone,
+                                    // there is no line-of-sight probe and no distance limit, so
+                                    // it works against a target at any range on the map.
+                                    custom::Checkbox("Triggerbot", &Config.ExtraMenu.A_Fire);
                                     static const char *aFireCriteria[] = {"Crosshair", "Scoping", "Shooting"};
-                                    custom::Combo("A-Fire On", &Config.ExtraMenu.A_FireTrigger, aFireCriteria, IM_ARRAYSIZE(aFireCriteria), -1);
-                                    custom::SliderFloat("Trigger Delay", &Config.ExtraMenu.A_FireDelay, 0.0f, 1.0f, "%.2fs");
+                                    custom::Combo("Triggerbot Mode", &Config.ExtraMenu.A_FireTrigger, aFireCriteria, IM_ARRAYSIZE(aFireCriteria), -1);
+                                    if (Config.ExtraMenu.A_Fire) {
+                                        custom::SliderFloat("Shot Delay", &Config.ExtraMenu.A_FireDelay, 0.0f, 1.0f, "%.2fs");
+                                        ImGui::TextColored(c::text::text, "Fires at any range - no distance limit");
+                                    }
                                     EndContentChild(right);
                                 }
                                 custom::EndGroup();

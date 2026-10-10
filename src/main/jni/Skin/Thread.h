@@ -1462,6 +1462,65 @@ inline bool Skins_HookAt(uintptr_t offset, HookFn replace, OrigFn *backup)
     return true;
 }
 
+// ───────── retryable ctor-hook table ─────────
+// Every skin ctor hook is kept in a table so one that could not be installed on
+// the first attempt (libunity still mapping, or an address that has not been
+// probed yet) is retried by the loader loop instead of being lost for the whole
+// session. Losing ItemInventory / WeaponConf is exactly the state that shows up
+// as "No weapon skins loaded" in the Skins tab.
+struct SkinHookEntry {
+    uintptr_t offset;
+    void     *replace;
+    void    **backup;
+    bool      installed;
+};
+
+inline SkinHookEntry g_skinHookEntries[] = {
+    { Item2InventoryAddress,           (void *) my_Item2InventoryCtor,    (void **) &orig_Item2InventoryCtor,    false },
+    { WeaponConfExtraAddress,          (void *) my_WeaponConfExtraCtor,   (void **) &orig_WeaponConfExtraCtor,   false },
+    { WeaponFireEffectAddress,         (void *) my_WeaponFireEffectCtor,  (void **) &orig_WeaponFireEffectCtor,  false },
+    { WeaponConfAddress,               (void *) my_WeaponConfCtor,        (void **) &orig_WeaponConfCtor,        false },
+    { WeaponAssetGroupAddress,         (void *) my_WeaponAssetGroupCtor,  (void **) &orig_WeaponAssetGroupCtor,  false },
+    { MythicArmorConfigAddress,        (void *) my_MythicArmorCtor,       (void **) &orig_MythicArmorCtor,       false },
+    { MythicSightConfigAddress,        (void *) my_MythicSightCtor,       (void **) &orig_MythicSightCtor,       false },
+    { WeaponSkinAddress,               (void *) my_WeaponSkinCtor,        (void **) &orig_WeaponSkinCtor,        false },
+    { WeaponCamosAddress,              (void *) my_WeaponCamosCtor,       (void **) &orig_WeaponCamosCtor,       false },
+    { KillEffectItemConfConfigAddress, (void *) my_KillEffectItemCtor,    (void **) &orig_KillEffectItemCtor,    false },
+    { ItemResourceAddress,             (void *) my_ItemResourceCtor,      (void **) &orig_ItemResourceCtor,      false },
+    { CharacterModelAddress,           (void *) my_CharacterModelCtor,    (void **) &orig_CharacterModelCtor,    false },
+    { RoleConfAddress,                 (void *) my_RoleConfCtor,          (void **) &orig_RoleConfCtor,          false },
+    { RoleSkinAddress,                 (void *) my_RoleSkinCtor,          (void **) &orig_RoleSkinCtor,          false },
+    { RolePackConfAddress,             (void *) my_RolePackConfCtor,      (void **) &orig_RolePackConfCtor,      false },
+    { BRDeadboxSkinAddress,            (void *) my_BRDeadboxSkinCtor,     (void **) &orig_BRDeadboxSkinCtor,     false },
+    { BRDropPlaneSkinAddress,          (void *) my_BRDropPlaneSkinCtor,   (void **) &orig_BRDropPlaneSkinCtor,   false },
+    { VehicleSkinConfAddress,          (void *) my_VehicleSkinConfCtor,   (void **) &orig_VehicleSkinConfCtor,   false },
+    { VehicleItemConfAddress,          (void *) my_VehicleItemConfCtor,   (void **) &orig_VehicleItemConfCtor,   false },
+};
+
+// Idempotent: installs every entry that is not hooked yet and whose target is
+// currently mapped. Returns how many hooks were installed by this call.
+inline int Skins_InstallCtorHooks()
+{
+    int installedNow = 0;
+    const int n = (int) (sizeof(g_skinHookEntries) / sizeof(g_skinHookEntries[0]));
+    for (int i = 0; i < n; ++i)
+    {
+        SkinHookEntry &e = g_skinHookEntries[i];
+        if (e.installed)
+            continue;
+        uintptr_t addr = getRealOffset(e.offset);
+        if (!Tools::IsPtrValid((void *) addr))
+        {
+            SKINERR("hook deferred, address not mapped yet: 0x%lx", (unsigned long) e.offset);
+            continue;
+        }
+        DobbyHook((void *) addr, e.replace, e.backup);
+        e.installed = true;
+        ++installedNow;
+    }
+    return installedNow;
+}
+
 void Skins_Thread()
 {
     SKINLOG("skins thread: waiting for libunity");
@@ -1470,27 +1529,7 @@ void Skins_Thread()
         sleep(1);
     }
 
-    Skins_HookAt(Item2InventoryAddress, my_Item2InventoryCtor, &orig_Item2InventoryCtor);
-    Skins_HookAt(WeaponConfExtraAddress, my_WeaponConfExtraCtor, &orig_WeaponConfExtraCtor);
-    Skins_HookAt(WeaponFireEffectAddress, my_WeaponFireEffectCtor, &orig_WeaponFireEffectCtor);
-    Skins_HookAt(WeaponConfAddress, my_WeaponConfCtor, &orig_WeaponConfCtor);
-    Skins_HookAt(WeaponAssetGroupAddress, my_WeaponAssetGroupCtor, &orig_WeaponAssetGroupCtor);
-    Skins_HookAt(MythicArmorConfigAddress, my_MythicArmorCtor, &orig_MythicArmorCtor);
-    Skins_HookAt(MythicSightConfigAddress, my_MythicSightCtor, &orig_MythicSightCtor);
-    Skins_HookAt(WeaponSkinAddress, my_WeaponSkinCtor, &orig_WeaponSkinCtor);
-    Skins_HookAt(WeaponCamosAddress, my_WeaponCamosCtor, &orig_WeaponCamosCtor);
-    Skins_HookAt(KillEffectItemConfConfigAddress, my_KillEffectItemCtor, &orig_KillEffectItemCtor);
-    Skins_HookAt(ItemResourceAddress, my_ItemResourceCtor, &orig_ItemResourceCtor);
-    Skins_HookAt(CharacterModelAddress, my_CharacterModelCtor, &orig_CharacterModelCtor);
-    Skins_HookAt(RoleConfAddress, my_RoleConfCtor, &orig_RoleConfCtor);
-    Skins_HookAt(RoleSkinAddress, my_RoleSkinCtor, &orig_RoleSkinCtor);
-    Skins_HookAt(RolePackConfAddress, my_RolePackConfCtor, &orig_RolePackConfCtor);
-    Skins_HookAt(BRDeadboxSkinAddress, my_BRDeadboxSkinCtor, &orig_BRDeadboxSkinCtor);
-    Skins_HookAt(BRDropPlaneSkinAddress, my_BRDropPlaneSkinCtor, &orig_BRDropPlaneSkinCtor);
-    Skins_HookAt(VehicleSkinConfAddress, my_VehicleSkinConfCtor, &orig_VehicleSkinConfCtor);
-    Skins_HookAt(VehicleItemConfAddress, my_VehicleItemConfCtor, &orig_VehicleItemConfCtor);
-
-    SKINLOG("skins thread: ctor hooks installed");
+    SKINLOG("skins thread: ctor hooks installed (%d)", Skins_InstallCtorHooks());
     // Skin data is collected on its own thread so a missing helper library can
     // never stall it. The lists start filling as soon as the game creates the
     // config objects, which is what the Skins tab renders.
@@ -1503,6 +1542,8 @@ void Skins_Thread()
         bool firstPass = true;
         while (true)
         {
+            // Re-attempt any ctor hook that was skipped on the first try.
+            Skins_InstallCtorHooks();
             if (firstPass) SKINLOG("loader: characters");
             LoadCharacterSkins();
             if (firstPass) SKINLOG("loader: weapons");

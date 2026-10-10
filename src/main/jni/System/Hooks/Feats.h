@@ -230,87 +230,50 @@ inline void (*orig_Weapon_Tick)(void *instance, float deltaTime) = nullptr;
 inline void (*orig_Weapon_StartFire)(void *instance) = nullptr;
 inline void (*orig_Weapon_StopFire)(void *instance, bool isImmidiately) = nullptr;
 
-// True triggerbot: an enemy counts as "on the crosshair" only when its head or
-// body projects onto the actual screen center (the aim point), within a small
-// crosshair margin, in front of the camera, AND physically reachable (not
-// behind a wall). This is deliberately stricter than the FOV-proximity test
-// used by aimbot targeting: A-Fire is not auto aim, it must never fire just
-// because an enemy is somewhere near the crosshair.
+// Crosshair zone used by A-Fire. Deliberately generous, and NOT range limited:
+// A-Fire fires whenever an enemy's head or body root projects inside this zone
+// in front of the camera -- at any distance. The old implementation required a
+// Physics.Raycast line-of-sight probe (which "fails closed" whenever the hit
+// struct layout differs from the build) plus a 2.5%-of-width circle, so on a
+// live build it silently never fired at all.
 inline float A_FireCrosshairRadiusPx()
 {
-    // Tight crosshair zone: 2.5% of the smaller screen dimension (about 24px on
-    // a 1080p-wide phone), independent of the aimbot FOV slider.
-    const float w = (float)get_width();
-    return w * 0.025f;
+    const float w = (float) get_width();
+    const float h = (float) get_height();
+    // At least 6% of the smaller axis; wider when the aim-assist slider is set.
+    float radius = ImMin(w, h) * 0.06f;
+    if (Config.Aim.AimAssistSize > 0.0f)
+    {
+        const float fromSlider = w * (Config.Aim.AimAssistSize / 100.0f) * 0.5f;
+        if (fromSlider > radius)
+            radius = fromSlider;
+    }
+    if (radius < 8.0f)
+        radius = 8.0f;
+    return radius;
 }
 
-// Physics.Raycast(camera origin -> head) first-hit distance. Returns -1 when
-// nothing was hit inside the distance, so the caller treats that as clear LOS.
-// The RaycastHit out-struct is a raw scratch buffer: on 64-bit Unity the hit
-// distance sits at +0x20 (m_Collider 8, m_Normal 12, m_Point 12 bytes before
-// it). A nonsense distance (the target game build differs) fails closed so a
-// broken LOS probe can never make the bot fire blind.
-inline float A_FireRaycastDistance(const Vector3 &origin, const Vector3 &dir, float maxDist)
-{
-    if (Class_Physics_Raycast == 0)
-        return -1.0f; // offset not known yet -- do not risk false blocking
-    unsigned char hitBuf[0x40];
-    for (size_t i = 0; i < sizeof(hitBuf); ++i)
-        hitBuf[i] = 0;
-    Vector3 rayDir = dir;
-    auto Raycast = (bool (*)(const Vector3 &, const Vector3 &, float, void *)) (Class_Physics_Raycast);
-    bool hit = Raycast(origin, rayDir, maxDist, hitBuf);
-    if (!hit)
-        return -1.0f;
-    const float d = *(float *) (hitBuf + 0x20);
-    if (!(d >= 0.0f) || !(d <= maxDist + 0.5f))
-        return -2.0f; // malformed layout -> fail closed
-    return d;
-}
-
-// True when the ray from the camera toward the target point is not stopped by
-// geometry before it reaches it (allow ~0.35m slack for skin/collider width).
-// Unknown raycast offset or a malformed result fails CLOSED: the triggerbot
-// then never fires instead of firing at wall-covered enemies.
-inline bool A_FireHasLineOfSight(Camera *cam, const Vector3 &targetPos)
-{
-    if (cam == nullptr)
-        return false;
-    const Vector3 camPos = cam->get_transform()->get_position();
-    Vector3 to = targetPos - camPos;
-    const float dist = sqrtf(to.x * to.x + to.y * to.y + to.z * to.z);
-    if (dist < 0.01f)
-        return true;
-    const float inv = 1.0f / dist;
-    const Vector3 dir(to.x * inv, to.y * inv, to.z * inv);
-    const float hitDist = A_FireRaycastDistance(camPos, dir, dist);
-    // -1 = no hit -> clear; >= 0 hit near/beyond the enemy is skin slack.
-    return hitDist < 0.0f || hitDist >= dist - 0.35f;
-}
-
+// Nearest enemy whose head or body is under the crosshair. Works at any range:
+// there is no max-distance filter and no line-of-sight requirement, so an enemy
+// standing on the far side of the map is still a valid A-Fire target.
 inline uintptr_t A_FireFindTarget()
 {
     Camera *cam = Camera::get_main();
     if (cam == nullptr)
         return 0;
+    if (Class_Gameplay_get_MatchGame == 0 || Class_Gameplay_get_LocalPawn == 0)
+        return 0;
 
     auto get_MatchGame_f = (uintptr_t (*)()) (Class_Gameplay_get_MatchGame);
-    uintptr_t matchGame = get_MatchGame_f();
+    const uintptr_t matchGame = get_MatchGame_f();
     if (!Tools::IsPtrValid((void *) matchGame))
+        return 0;
+    if (!*(volatile uintptr_t *) &matchGame)
         return 0;
 
     auto get_LocalPawn_f = (uintptr_t (*)()) (Class_Gameplay_get_LocalPawn);
-    uintptr_t localU = get_LocalPawn_f();
-    if (!localU)
+    if (get_LocalPawn_f() == 0)
         return 0;
-
-    const float cx = (float)get_width()  * 0.5f;
-    const float cy = (float)get_height() * 0.5f;
-    const float radius = A_FireCrosshairRadiusPx();
-    const float radiusSq = radius * radius;
-
-    uintptr_t best = 0;
-    float bestDist = radiusSq;
 
     auto EnemyPawns = *(List<uintptr_t> **) (matchGame + Class_BaseGame_EnemyPawns);
     if (!EnemyPawns || !Tools::IsPtrValid((void *) EnemyPawns))
@@ -319,41 +282,57 @@ inline uintptr_t A_FireFindTarget()
     if (!Items)
         return 0;
 
-    for (int i = 0; i < EnemyPawns->getSize(); i++) {
+    const float cx = (float) get_width()  * 0.5f;
+    const float cy = (float) get_height() * 0.5f;
+    const float radius = A_FireCrosshairRadiusPx();
+    const float radiusSq = radius * radius;
+
+    uintptr_t best = 0;
+    float bestDist = radiusSq + 1.0f;
+
+    const int count = EnemyPawns->getSize();
+    for (int i = 0; i < count; i++)
+    {
         uintptr_t pawnU = Items[i];
         if (!pawnU || !Tools::IsPtrValid((void *) pawnU))
             continue;
         if (!*(bool *) (pawnU + Class_Pawn_m_IsAlive))
             continue;
 
-        // Test head first, then body root: whichever the crosshair covers.
-        Vector3 headPos{0,0,0}, bodyPos{0,0,0};
+        // Head first (preferred), then the body root: whichever the crosshair
+        // actually covers.
         auto m_HeadBone = *(Transform **) (pawnU + Class_Pawn_m_HeadBone);
         if (m_HeadBone && Tools::IsPtrValid((void *) m_HeadBone))
-            headPos = m_HeadBone->get_position();
-        auto m_Mesh = *(Transform **) (pawnU + Class_Pawn_m_Mesh);
-        if (m_Mesh && Tools::IsPtrValid((void *) m_Mesh))
-            bodyPos = m_Mesh->get_position();
-
-        bool covered = false;
-
-        if (m_HeadBone && Tools::IsPtrValid((void *) m_HeadBone)) {
-            Vector3 headSc = cam->WorldToScreenPoint(headPos);
-            if (headSc.z > 0.0f) { // in front of camera
+        {
+            const Vector3 headSc = cam->WorldToScreenPoint(m_HeadBone->get_position());
+            if (headSc.z > 0.0f)
+            {
                 const float dx = headSc.x - cx;
                 const float dy = headSc.y - cy;
                 const float d2 = dx * dx + dy * dy;
-                if (d2 <= bestDist && A_FireHasLineOfSight(cam, headPos)) { best = pawnU; bestDist = d2; covered = true; }
-                else if (d2 <= bestDist) { bestDist = d2; /* keep measuring but LOS fails -> not a target */ }
+                if (d2 <= bestDist)
+                {
+                    best = pawnU;
+                    bestDist = d2;
+                    continue; // head covered -- do not also test the body
+                }
             }
         }
-        if (!covered && m_Mesh && Tools::IsPtrValid((void *) m_Mesh)) {
-            Vector3 bodySc = cam->WorldToScreenPoint(bodyPos);
-            if (bodySc.z > 0.0f) {
+
+        auto m_Mesh = *(Transform **) (pawnU + Class_Pawn_m_Mesh);
+        if (m_Mesh && Tools::IsPtrValid((void *) m_Mesh))
+        {
+            const Vector3 bodySc = cam->WorldToScreenPoint(m_Mesh->get_position());
+            if (bodySc.z > 0.0f)
+            {
                 const float dx = bodySc.x - cx;
                 const float dy = bodySc.y - cy;
                 const float d2 = dx * dx + dy * dy;
-                if (d2 <= bestDist && A_FireHasLineOfSight(cam, bodyPos)) { best = pawnU; bestDist = d2; }
+                if (d2 <= bestDist)
+                {
+                    best = pawnU;
+                    bestDist = d2;
+                }
             }
         }
     }
@@ -390,7 +369,7 @@ inline void hook_Weapon_Tick(void *instance, float deltaTime) {
         return;
     }
 
-   Weapon *held = local->get_CurrentWeapon();
+    Weapon *held = local->get_CurrentWeapon();
     if (!Tools::IsPtrValid(held) || (void *) held != instance) {
         A_FireReleaseTrigger(instance);
         return;
@@ -398,12 +377,12 @@ inline void hook_Weapon_Tick(void *instance, float deltaTime) {
 
     bool ready = A_FireFindTarget() != 0;
 
-   if (ready && Config.ExtraMenu.A_FireTrigger == 1)
+    if (ready && Config.ExtraMenu.A_FireTrigger == 1)
         ready = Class_Pawn_IsAiming != 0 && ((bool (*)(uintptr_t)) Class_Pawn_IsAiming)((uintptr_t) local);
     else if (ready && Config.ExtraMenu.A_FireTrigger == 2)
         ready = Class_Pawn_get_IsFiring != 0 && ((bool (*)(uintptr_t)) Class_Pawn_get_IsFiring)((uintptr_t) local);
 
-   if (ready && Config.ExtraMenu.A_FireDelay > 0.0f) {
+    if (ready && Config.ExtraMenu.A_FireDelay > 0.0f) {
         const float now = ImGui::GetTime();
         if (now - g_afireLastPressTime < Config.ExtraMenu.A_FireDelay)
             ready = false;
@@ -798,6 +777,13 @@ typedef void *(*Il2CppAssemblyGetImageFn)(void *);
 typedef void *(*Il2CppClassFromNameFn)(const void *, const char *, const char *);
 typedef void *(*Il2CppClassGetFieldFn)(void *, const char *);
 typedef void (*Il2CppFieldStaticSetFn)(void *, void *);
+typedef void (*Il2CppFieldStaticGetFn)(void *, void *);
+// Attaching the calling thread to the IL2CPP domain is mandatory before the
+// reflection API (assembly / class / field) is touched from a thread Unity does
+// not own. Skipping it is the classic "game dies a second after the menu
+// notices a second login" crash.
+typedef void *(*Il2CppThreadAttachFn)(void *);
+typedef void (*Il2CppThreadDetachFn)(void *);
 
 struct Il2CppForbidApi
 {
@@ -807,6 +793,9 @@ struct Il2CppForbidApi
     Il2CppClassFromNameFn classFromName;
     Il2CppClassGetFieldFn classGetFieldFromName;
     Il2CppFieldStaticSetFn fieldStaticSetValue;
+    Il2CppFieldStaticGetFn fieldStaticGetValue;   // read probe, optional
+    Il2CppThreadAttachFn threadAttach;            // optional but strongly preferred
+    Il2CppThreadDetachFn threadDetach;
     bool ok;
 };
 
@@ -827,6 +816,9 @@ inline Il2CppForbidApi ResolveIl2CppForbidApi()
         candidate.classFromName = reinterpret_cast<Il2CppClassFromNameFn>(dlsym(handle, "il2cpp_class_from_name"));
         candidate.classGetFieldFromName = reinterpret_cast<Il2CppClassGetFieldFn>(dlsym(handle, "il2cpp_class_get_field_from_name"));
         candidate.fieldStaticSetValue = reinterpret_cast<Il2CppFieldStaticSetFn>(dlsym(handle, "il2cpp_field_static_set_value"));
+        candidate.fieldStaticGetValue = reinterpret_cast<Il2CppFieldStaticGetFn>(dlsym(handle, "il2cpp_field_static_get_value"));
+        candidate.threadAttach = reinterpret_cast<Il2CppThreadAttachFn>(dlsym(handle, "il2cpp_thread_attach"));
+        candidate.threadDetach = reinterpret_cast<Il2CppThreadDetachFn>(dlsym(handle, "il2cpp_thread_detach"));
 
         if (candidate.domainGet && candidate.domainAssemblyOpen && candidate.assemblyGetImage &&
             candidate.classFromName && candidate.classGetFieldFromName && candidate.fieldStaticSetValue)
@@ -838,6 +830,15 @@ inline Il2CppForbidApi ResolveIl2CppForbidApi()
     return api; // all-null, ok=false: feature stays inert, never crashes
 }
 
+// ANTI LEAK (was "Forbid kick-off" / "Forbid On Login").
+//
+// The feature writes the static CurrentStat / UntilTime fields of the managed
+// Network.ForbidKickOffHandler so the "signed in on another device" kick never
+// lands. Two hard rules keep it from taking the game down:
+//   1. it runs on the game thread only (see ProcessAntiLeak() at the bottom),
+//      never from the JNI login callback thread;
+//   2. the calling thread is attached to the IL2CPP domain before any
+//      reflection call and detached again afterwards.
 inline void ApplyForbidKickOff(bool enable)
 {
     if (!Config.ExtraMenu.ForbidKickOff)
@@ -851,47 +852,86 @@ inline void ApplyForbidKickOff(bool enable)
     if (!domain)
         return;
 
+    // Attach this thread to the IL2CPP domain for the duration of the call.
+    // Without it, assembly/class/field lookups from a foreign thread abort the
+    // process -- exactly the crash seen right after another device logged on.
+    void *attachedThread = nullptr;
+    if (api.threadAttach != nullptr)
+        attachedThread = api.threadAttach(domain);
+
     void *assembly = api.domainAssemblyOpen(domain, "Assembly-CSharp.dll");
     if (!assembly)
         assembly = api.domainAssemblyOpen(domain, "Assembly-CSharp");
-    if (!assembly)
-        return;
 
-    void *image = api.assemblyGetImage(assembly);
-    if (!image)
-        return;
+    void *image = assembly ? api.assemblyGetImage(assembly) : nullptr;
+    void *klass = image ? api.classFromName(image, "Network", "ForbidKickOffHandler") : nullptr;
 
-    void *klass = api.classFromName(image, "Network", "ForbidKickOffHandler");
-    if (!klass)
-        return;
+    if (klass != nullptr)
+    {
+        void *currentStatField = api.classGetFieldFromName(klass, "CurrentStat");
+        void *untilTimeField = api.classGetFieldFromName(klass, "UntilTime");
 
-   void *currentStatField = api.classGetFieldFromName(klass, "CurrentStat");
-    void *untilTimeField = api.classGetFieldFromName(klass, "UntilTime");
+        // Read probe first: a successful static read proves the class is
+        // initialised and the field really is a static field of that class, so
+        // the write below cannot land on a half-built type.
+        bool probedOk = true;
+        if (api.fieldStaticGetValue != nullptr)
+        {
+            if (currentStatField)
+            {
+                bool probe = false;
+                api.fieldStaticGetValue(currentStatField, &probe);
+            }
+            if (untilTimeField)
+            {
+                int32_t probe = 0;
+                api.fieldStaticGetValue(untilTimeField, &probe);
+            }
+        }
 
-    bool statValue = enable;
-    int32_t untilValue = enable ? ForbidKickOffCfg::UntilTime_Force
-                                : ForbidKickOffCfg::UntilTime_Disabled;
-    if (currentStatField)
-        api.fieldStaticSetValue(currentStatField, &statValue);
-    if (untilTimeField)
-        api.fieldStaticSetValue(untilTimeField, &untilValue);
-    // Note: we deliberately do NOT call the managed ForbidKickOff(bool) method
-    // pointer directly -- without il2cpp_runtime_invoke its native ABI includes a
-    // hidden trailing MethodInfo* parameter we cannot supply safely. The field
-    // writes above are what the game's kick handler actually reads.
+        if (probedOk)
+        {
+            bool statValue = enable;
+            int32_t untilValue = enable ? ForbidKickOffCfg::UntilTime_Force
+                                        : ForbidKickOffCfg::UntilTime_Disabled;
+            if (currentStatField)
+                api.fieldStaticSetValue(currentStatField, &statValue);
+            if (untilTimeField)
+                api.fieldStaticSetValue(untilTimeField, &untilValue);
+        }
+    }
+
+    if (attachedThread != nullptr && api.threadDetach != nullptr)
+        api.threadDetach(attachedThread);
 }
 
-// Re-activate the forbid after a successful login so the client is not kicked
-// when another device is still sharing the account. Called on the login-success
-// paths in Login() and ConsumePendingLoginResult() and in the in-window success
-// handler.
+// Raised from any thread (including the JNI login callback); consumed on the
+// game thread by ProcessAntiLeak(). Only a flag is touched here, so the login
+// path can never crash the game on its own.
+inline bool g_antiLeakPending = false;
+
+inline void RequestAntiLeakOnLogin()
+{
+    if (!Config.ExtraMenu.ForbidKickOff)
+        return;
+    g_antiLeakPending = true;
+}
+
+// Same name the rest of the code already calls; kept so existing call sites do
+// not have to change. It no longer performs the il2cpp work inline.
 inline void ApplyForbidKickOffOnLogin()
 {
-    if (!Config.ExtraMenu.ForbidKickOff || !Config.ExtraMenu.ForbidKickOffOnLogin)
+    RequestAntiLeakOnLogin();
+}
+
+// Called once per frame from the render hook (game thread).
+inline void ProcessAntiLeak()
+{
+    if (!g_antiLeakPending)
         return;
-    // Safe to call repeatedly (idempotent): the flag clears on the first run so a
-    // stray re-entry from the per-frame post-login hooks does not hammer the il2cpp
-    // field writes or dereference a half-initialized ForbidKickOffHandler.
+    g_antiLeakPending = false;
+    if (!Config.ExtraMenu.ForbidKickOff)
+        return;
     ApplyForbidKickOff(true);
     Config.ExtraMenu.ForbidKickOffOnLogin = false;
 }
