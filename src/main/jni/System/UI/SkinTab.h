@@ -344,6 +344,22 @@ inline void RenderSkinCategoryContent(int categoryIndex, bool drawSubTabs = fals
 
     ImGui::BeginChild("SkinContent", ImVec2(0, 0));
     ImGui::Dummy(ImVec2(0, 8 * c::scale));
+
+    // Loader diagnostics. The skin lists can only fill once the ctor hooks are
+    // installed, so this line states plainly whether they are: hooks x/19 and
+    // how many entries each category actually has. That turns "No skins loaded"
+    // from a guess into something readable straight off the screen.
+    {
+        int hooksInstalled = 0;
+        const int hooksTotal = (int)(sizeof(g_skinHookEntries) / sizeof(g_skinHookEntries[0]));
+        for (int i = 0; i < hooksTotal; ++i)
+            if (g_skinHookEntries[i].installed) ++hooksInstalled;
+        ImGui::TextColored(ImVec4(0.55f, 0.55f, 0.62f, 1.0f),
+            "loader hooks %d/%d  chars %d  weapons %d  watch %d  deadbox %d  planes %d",
+            hooksInstalled, hooksTotal,
+            (int) charData.size(), (int) itemData.size(), (int) watch.size(),
+            (int) deadboxF.size(), (int) dropplane.size());
+    }
     
     if (drawSubTabs) {
         const float tabSpacing = 8.0f * c::scale;

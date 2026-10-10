@@ -1260,13 +1260,24 @@ namespace ModernUI {
     // Keeps the menu header on screen so the container can always be dragged back.
     inline ImVec2 ClampMenuPos(const ImVec2& pos, const ImVec2& windowSize, const ImVec2& displaySize)
     {
-        const float minVisibleX = 140.0f;
-        const float minVisibleY = 90.0f;
-        ImVec2 out = pos;
         if (displaySize.x <= 0.0f || displaySize.y <= 0.0f)
-            return out; // display size not known yet
-        out.x = ImClamp(out.x, ImMin(0.0f, -windowSize.x + minVisibleX), ImMax(0.0f, displaySize.x - minVisibleX));
-        out.y = ImClamp(out.y, 0.0f, ImMax(0.0f, displaySize.y - minVisibleY));
+            return pos; // display size not known yet
+
+        // Keep the whole card on screen. The old version only guaranteed 140px
+        // (x) / 90px (y) of the card stayed visible, so a stale position saved by
+        // an earlier build left most of the menu -- including the entire sidebar
+        // -- hanging off the left edge of the screen.
+        ImVec2 out = pos;
+        if (windowSize.x <= displaySize.x)
+            out.x = ImClamp(out.x, 0.0f, displaySize.x - windowSize.x);
+        else
+            out.x = (displaySize.x - windowSize.x) * 0.5f;
+
+        if (windowSize.y <= displaySize.y)
+            out.y = ImClamp(out.y, 0.0f, displaySize.y - windowSize.y);
+        else
+            out.y = (displaySize.y - windowSize.y) * 0.5f;
+
         return out;
     }
 
@@ -1807,6 +1818,11 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
     // callback) so the il2cpp field write can never take the process down.
     ProcessAntiLeak();
 
+    // Triggerbot driver: runs every frame on the game thread instead of relying
+    // on Weapon::Tick, which never fired when the ticked instance did not match
+    // the currently held weapon.
+    A_FireTick();
+
     // Rename card / report spoof: keep the local player's own profile in sync with
     // the menu values (report spoof is applied last so its decoy identity wins).
     // Defend against the first frames right after login where get_LocalPawn() can
@@ -1965,15 +1981,18 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
 
                 // Lumin's license_key_icon(): a small accent key drawn with the
                 // draw list (the framework does the same, no glyph involved).
+                // A real key silhouette: ring on the left, horizontal shaft with
+                // two teeth. (The previous version drew a diagonal handle, which
+                // read as a magnifying glass.)
                 auto drawKeyIcon = [&](const ImVec2 &center, ImU32 col, float scale) {
-                    const ImVec2 k0(center.x - 4.0f * scale, center.y - 3.0f * scale);
-                    draw->AddCircle(k0, 5.0f * scale, col, 24, 1.7f * scale);
-                    draw->AddLine(ImVec2(k0.x + 4.0f * scale, k0.y + 4.0f * scale),
-                                  ImVec2(k0.x + 14.0f * scale, k0.y + 14.0f * scale), col, 1.7f * scale);
-                    draw->AddLine(ImVec2(k0.x + 10.0f * scale, k0.y + 10.0f * scale),
-                                  ImVec2(k0.x + 14.0f * scale, k0.y + 6.0f * scale), col, 1.5f * scale);
-                    draw->AddLine(ImVec2(k0.x + 13.0f * scale, k0.y + 13.0f * scale),
-                                  ImVec2(k0.x + 17.0f * scale, k0.y + 9.0f * scale), col, 1.5f * scale);
+                    const ImVec2 ring(center.x - 6.0f * scale, center.y);
+                    draw->AddCircle(ring, 4.6f * scale, col, 28, 1.8f * scale);
+                    draw->AddLine(ImVec2(ring.x + 4.6f * scale, center.y),
+                                  ImVec2(center.x + 12.0f * scale, center.y), col, 1.8f * scale);
+                    draw->AddLine(ImVec2(center.x + 4.0f * scale, center.y),
+                                  ImVec2(center.x + 4.0f * scale, center.y + 4.5f * scale), col, 1.8f * scale);
+                    draw->AddLine(ImVec2(center.x + 8.5f * scale, center.y),
+                                  ImVec2(center.x + 8.5f * scale, center.y + 3.5f * scale), col, 1.8f * scale);
                 };
 
                 // ── Card shell (Lumin child fill + glass border) ──────────────
@@ -2235,8 +2254,10 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                 ImGui::PushStyleVar(ImGuiStyleVar_Alpha, openAlpha);
 
                 ImVec2 mainWindowSize = ImVec2(1120.f, 640.f);
-                mainWindowSize.x = ImMin(mainWindowSize.x, displaySize.x);
-                mainWindowSize.y = ImMin(mainWindowSize.y, displaySize.y);
+                // Leave a margin so the accent edge/border is never clipped by
+                // the screen edge, and never go below a usable minimum.
+                mainWindowSize.x = ImMin(mainWindowSize.x, ImMax(360.0f, displaySize.x - 16.0f));
+                mainWindowSize.y = ImMin(mainWindowSize.y, ImMax(240.0f, displaySize.y - 16.0f));
 
                 // Centered on first open, then free-draggable: grab the header and
                 // the dropped position is remembered in ui_layout.ini.
@@ -2247,11 +2268,25 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                 {
                     menuPosInit = true;
                     const ui_layout::State& layout = ui_layout::Get();
-                    menuWindowPos = layout.hasMenu
-                        ? ImVec2(layout.menuX, layout.menuY)
-                        : ImVec2((displaySize.x - mainWindowSize.x) * 0.5f, (displaySize.y - mainWindowSize.y) * 0.5f);
+                    const ImVec2 centeredPos((displaySize.x - mainWindowSize.x) * 0.5f,
+                                             (displaySize.y - mainWindowSize.y) * 0.5f);
+                    menuWindowPos = centeredPos;
+                    if (layout.hasMenu)
+                    {
+                        // Only honour a remembered position when the whole card
+                        // still fits on screen; a position written by an older
+                        // build (different window size) would otherwise park the
+                        // menu half off the display.
+                        const bool fits = layout.menuX >= -0.5f && layout.menuY >= -0.5f &&
+                                          layout.menuX + mainWindowSize.x <= displaySize.x + 0.5f &&
+                                          layout.menuY + mainWindowSize.y <= displaySize.y + 0.5f;
+                        if (fits)
+                        {
+                            menuWindowPos = ImVec2(layout.menuX, layout.menuY);
+                            menuPosOnDisk = menuWindowPos;
+                        }
+                    }
                     menuWindowPos = ModernUI::ClampMenuPos(menuWindowPos, mainWindowSize, displaySize);
-                    if (layout.hasMenu) menuPosOnDisk = menuWindowPos;
                     ImGui::SetNextWindowPos(menuWindowPos, ImGuiCond_Always);
                 }
                 ImGui::SetNextWindowSize(mainWindowSize, ImGuiCond_Always);
@@ -2271,9 +2306,21 @@ EGLBoolean hook_eglSwapBuffers(EGLDisplay dpy, EGLSurface surface)
                         main_runtime_theme::applyZeninStandardStyle();
 
                         const ImVec2 runtimeWindowSize = ImGui::GetWindowSize();
-                        const ImVec2 runtimeWindowPos = ImGui::GetWindowPos();
+                        ImVec2 runtimeWindowPos = ImGui::GetWindowPos();
                         menuWindowPos = runtimeWindowPos;
                         ImDrawList *runtimeDrawList = ImGui::GetWindowDrawList();
+
+                        // Per-frame rescue: if the card is (partly) off-screen --
+                        // a stale saved position, a rotation, or a resolution
+                        // change -- pull it fully back into view.
+                        {
+                            const ImVec2 fixed = ModernUI::ClampMenuPos(runtimeWindowPos, runtimeWindowSize, displaySize);
+                            if (fixed.x != runtimeWindowPos.x || fixed.y != runtimeWindowPos.y) {
+                                menuWindowPos = fixed;
+                                ImGui::SetWindowPos(menuWindowPos, ImGuiCond_Always);
+                                runtimeWindowPos = fixed;
+                            }
+                        }
 
                         // Zenin window skin: dark charcoal card, thin grey
                         // border, red accent top edge (matches the reference UI).

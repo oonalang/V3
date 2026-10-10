@@ -351,27 +351,38 @@ inline void A_FireReleaseTrigger(void *instance) {
     }
 }
 
+// Weapon::Tick is still hooked (it is cheap and keeps the original behaviour),
+// but the triggerbot is no longer driven from here: gating on
+// "the ticked instance is the currently held weapon" silently never fired
+// whenever that comparison failed (wrong Tick address, weapon swap, off-hand
+// tick). A_FireTick() below runs from the render loop instead.
 inline void hook_Weapon_Tick(void *instance, float deltaTime) {
     if (orig_Weapon_Tick != nullptr)
         orig_Weapon_Tick(instance, deltaTime);
+}
 
-    if (instance == nullptr)
-        return;
-
+// Frame driver for the triggerbot. Runs on the game thread every frame from the
+// render hook, so A-Fire works independently of which weapon object the game
+// happens to tick.
+inline void A_FireTick()
+{
     if (!Config.ExtraMenu.A_Fire) {
-        A_FireReleaseTrigger(instance);
+        A_FireReleaseTrigger(nullptr);
         return;
     }
 
+    if (Class_Gameplay_get_LocalPawn == 0)
+        return;
+
     Pawn *local = GamePlay::get_LocalPawn();
     if (!Tools::IsPtrValid(local) || !local->m_IsAlive()) {
-        A_FireReleaseTrigger(instance);
+        A_FireReleaseTrigger(nullptr);
         return;
     }
 
     Weapon *held = local->get_CurrentWeapon();
-    if (!Tools::IsPtrValid(held) || (void *) held != instance) {
-        A_FireReleaseTrigger(instance);
+    if (!Tools::IsPtrValid(held)) {
+        A_FireReleaseTrigger(nullptr);
         return;
     }
 
@@ -391,14 +402,14 @@ inline void hook_Weapon_Tick(void *instance, float deltaTime) {
     if (ready) {
         if (!g_afireHoldingFire) {
             if (orig_Weapon_StartFire != nullptr)
-                orig_Weapon_StartFire(instance);
+                orig_Weapon_StartFire((void *) held);
             g_afireHoldingFire = true;
-            g_afireFiringOn = instance;
+            g_afireFiringOn = (void *) held;
         }
         g_afireLastPressTime = ImGui::GetTime();
-    } else if (g_afireHoldingFire && instance == g_afireFiringOn) {
-        if (orig_Weapon_StopFire != nullptr)
-            orig_Weapon_StopFire(instance, false);
+    } else if (g_afireHoldingFire) {
+        if (orig_Weapon_StopFire != nullptr && g_afireFiringOn != nullptr)
+            orig_Weapon_StopFire(g_afireFiringOn, false);
         g_afireHoldingFire = false;
         g_afireFiringOn = nullptr;
     }

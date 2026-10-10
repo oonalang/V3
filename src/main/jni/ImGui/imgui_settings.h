@@ -479,7 +479,10 @@ namespace main_runtime_theme
     inline void ApplyThemeState()
     {
         c::scale = 1.15f;
-        c::widget_scale = 1.45f;
+        // Compact reference-style widgets: the old 1.45 bloated every control
+        // (a 27px checkbox box on a 22px row) and is what made the menu read as
+        // oversized next to the reference layout.
+        c::widget_scale = 1.0f;
         const float childPadding = GetChildPadding();
         c::accent = ImColor(GetAccentVec4());
         c::separator = ImColor(45.0f / 255.0f, 45.0f / 255.0f, 45.0f / 255.0f, 0.70f);
