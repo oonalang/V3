@@ -56,6 +56,8 @@ void SaveConfiguration(const std::string& filename) {
     config["ExtraMenu"]["Spread"] = Config.ExtraMenu.Spread;
     config["ExtraMenu"]["Reload"] = Config.ExtraMenu.Reload;
     config["ExtraMenu"]["Scope"] = Config.ExtraMenu.Scope;
+    config["ExtraMenu"]["NoFlinch"] = Config.ExtraMenu.NoFlinch;
+    config["ExtraMenu"]["NoDrift"] = Config.ExtraMenu.NoDrift;
     config["ExtraMenu"]["Switch"] = Config.ExtraMenu.Switch;
     config["ExtraMenu"]["KineticArmor"] = Config.ExtraMenu.Kinetic;
 
@@ -143,6 +145,8 @@ bool LoadConfiguration(const std::string& filename) {
             Config.ExtraMenu.Spread = config["ExtraMenu"]["Spread"].get<bool>();
             Config.ExtraMenu.Reload = config["ExtraMenu"]["Reload"].get<bool>();
             Config.ExtraMenu.Scope = config["ExtraMenu"]["Scope"].get<bool>();
+            if (config["ExtraMenu"].contains("NoFlinch")) Config.ExtraMenu.NoFlinch = config["ExtraMenu"]["NoFlinch"].get<bool>();
+            if (config["ExtraMenu"].contains("NoDrift")) Config.ExtraMenu.NoDrift = config["ExtraMenu"]["NoDrift"].get<bool>();
             Config.ExtraMenu.Switch = config["ExtraMenu"]["Switch"].get<bool>();
             Config.ExtraMenu.Kinetic = config["ExtraMenu"]["Kinetic"].get<bool>();
 

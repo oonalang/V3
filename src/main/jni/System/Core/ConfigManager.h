@@ -59,6 +59,8 @@ void LoadConfig() {
         else if (key == "ExtraMenu.Spread") Config.ExtraMenu.Spread = (valueStr == "1");
         else if (key == "ExtraMenu.Reload") Config.ExtraMenu.Reload = (valueStr == "1");
         else if (key == "ExtraMenu.Scope") Config.ExtraMenu.Scope = (valueStr == "1");
+        else if (key == "ExtraMenu.NoFlinch") Config.ExtraMenu.NoFlinch = (valueStr == "1");
+        else if (key == "ExtraMenu.NoDrift") Config.ExtraMenu.NoDrift = (valueStr == "1");
         else if (key == "ExtraMenu.Switch") Config.ExtraMenu.Switch = (valueStr == "1");
         else if (key == "ExtraMenu.Shake") Config.ExtraMenu.Shake = (valueStr == "1");
         else if (key == "ExtraMenu.Flash") Config.ExtraMenu.Flash = (valueStr == "1");
@@ -129,6 +131,8 @@ void SaveConfig() {
     file << "ExtraMenu.Spread " << Config.ExtraMenu.Spread << "\n";
     file << "ExtraMenu.Reload " << Config.ExtraMenu.Reload << "\n";
     file << "ExtraMenu.Scope " << Config.ExtraMenu.Scope << "\n";
+    file << "ExtraMenu.NoFlinch " << Config.ExtraMenu.NoFlinch << "\n";
+    file << "ExtraMenu.NoDrift " << Config.ExtraMenu.NoDrift << "\n";
     file << "ExtraMenu.Switch " << Config.ExtraMenu.Switch << "\n";
     file << "ExtraMenu.Shake " << Config.ExtraMenu.Shake << "\n";
     file << "ExtraMenu.Flash " << Config.ExtraMenu.Flash << "\n";

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Includes/SafePatch.h"
+#include <unistd.h>   // usleep (bounded wait for the game's libraries)
 
 bool (*orig_bypass)(void *ins);
 bool hook_bypass(void *ins) {
@@ -89,6 +90,24 @@ inline const uintptr_t kProtectionHookRvAs[] = {
     0x48CF20
 };
 
+// ── wait for a game library to appear ────────────────────────────────────────
+// The protection library is mapped by the *game*, not by this module: at
+// JNI_OnLoad only our own .so is in memory, so every libanogs.so target resolves
+// to null. Hooking before that point used to be a silent no-op for the whole
+// anti-cheat bypass (the client then gets terminated by the detector during its
+// own load -- the reported "black screen, then the game is gone"). Wait for the
+// mapping, bounded, and say so in the log when it never shows up.
+inline bool WaitForLibrary(const char *lib, int timeoutMs)
+{
+    const int steps = timeoutMs > 0 ? timeoutMs / 250 : 0;
+    for (int i = 0; i < steps; ++i) {
+        if (Tools::GetBaseAddress(lib) != 0)
+            return true;
+        usleep(250 * 1000);
+    }
+    return Tools::GetBaseAddress(lib) != 0;
+}
+
 inline void InitializeProtection() {
     if (SafeModeEnabled())
     {
@@ -96,15 +115,40 @@ inline void InitializeProtection() {
         return;
     }
 
-    int installed = 0;
-    for (uintptr_t rva : kProtectionHookRvAs) {
-        char label[96];
-        snprintf(label, sizeof label, "protection 0x%lx", (unsigned long) rva);
-        if (SafeToolsHook("libanogs.so", rva, (void *) hook_bypass, (void **) &orig_bypass, label))
-            ++installed;
+    // libanogs.so loads after this module does. Installing these hooks before it
+    // is mapped installs nothing and leaves the anti-cheat free to kill the
+    // client mid-load. Wait for it (the game maps it early in its own boot).
+    if (!WaitForLibrary("libanogs.so", 120 * 1000)) {
+        SAFEERR("protection: libanogs.so never mapped -- anti-cheat bypass NOT installed");
+        return;
     }
-    SAFELOG("protection: %d/%d anti-cheat hooks installed", installed,
-            (int) (sizeof(kProtectionHookRvAs) / sizeof(kProtectionHookRvAs[0])));
+
+    const int total = (int) (sizeof(kProtectionHookRvAs) / sizeof(kProtectionHookRvAs[0]));
+    static bool done[sizeof(kProtectionHookRvAs) / sizeof(kProtectionHookRvAs[0])] = {};
+    int installed = 0;
+
+    // Two passes: while the library is still being mapped the range probe can
+    // read a half-populated map and refuse a target that is fine a moment later.
+    for (int pass = 0; pass < 2; ++pass) {
+        int thisPass = 0;
+        for (int i = 0; i < total; ++i) {
+            if (done[i])
+                continue;
+            char label[96];
+            snprintf(label, sizeof label, "protection 0x%lx", (unsigned long) kProtectionHookRvAs[i]);
+            if (SafeToolsHook("libanogs.so", kProtectionHookRvAs[i], (void *) hook_bypass,
+                              (void **) &orig_bypass, label)) {
+                done[i] = true;
+                ++installed;
+                ++thisPass;
+            }
+        }
+        if (installed == total || thisPass == 0)
+            break;
+        usleep(1500 * 1000);
+    }
+
+    SAFELOG("protection: %d/%d anti-cheat hooks installed", installed, total);
 }
     
     

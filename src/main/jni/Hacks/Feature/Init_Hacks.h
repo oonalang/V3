@@ -223,6 +223,16 @@ sColorsESPBOT sColorsESPBOT{0};
         bool Reload;
         bool Shake;
         bool Scope;
+        // -- No Hit Flinch --
+        // Being shot normally punches the camera ("flinch"). When on, the hit
+        // punch multiplier is forced to zero so the view stays where the player
+        // put it (all the game's own decay/book-keeping still runs).
+        bool NoFlinch = false;
+        // -- No Scope Drift --
+        // While scoped, the weapon's "breathe trembling" slowly drifts the scope.
+        // When on, that trembling logic is not driven at all, so a long
+        // hardscope stays exactly where it was aimed.
+        bool NoDrift = false;
         bool Switch;
         bool Flash;
         bool Hit;

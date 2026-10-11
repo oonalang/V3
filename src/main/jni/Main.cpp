@@ -1525,6 +1525,8 @@ inline void PanicMemoryTab()
     Config.ExtraMenu.Recoil = false;
     Config.ExtraMenu.Spread = false;
     Config.ExtraMenu.Shake = false;
+    Config.ExtraMenu.NoFlinch = false;
+    Config.ExtraMenu.NoDrift = false;
     Config.ExtraMenu.Rpd = false;
     Config.ExtraMenu.Parachute = false;
     Config.ExtraMenu.Flash = false;
@@ -2787,6 +2789,10 @@ runtimeDrawList->AddRectFilledMultiColor(runtimeWindowPos, ImVec2(runtimeWindowP
                                     custom::Checkbox("No Overheat", &Config.ExtraMenu.Rpd);
                                     custom::Checkbox("No Parachute", &Config.ExtraMenu.Parachute);
                                     custom::Checkbox("Anti Flashbang", &Config.ExtraMenu.Flash);
+                                    // No Hit Flinch: being shot no longer punches your camera.
+                                    custom::Checkbox("No Hit Flinch", &Config.ExtraMenu.NoFlinch);
+                                    // No Scope Drift: holding a hardscope no longer drifts.
+                                    custom::Checkbox("No Scope Drift", &Config.ExtraMenu.NoDrift);
                                     custom::Checkbox("Firerate", &Config.ExtraMenu.Fire);
                                     custom::Checkbox("No Sprint-Fire Delay", &Config.ExtraMenu.NoSprintFireDelay);
                                     custom::Checkbox("Fast Dive", &Config.ExtraMenu.Diving);

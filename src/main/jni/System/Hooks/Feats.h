@@ -1168,6 +1168,86 @@ inline float get_AimingTime(void* instance) {
     return orig_get_AimingTime(instance);
 }
 
+//-- No Hit Flinch
+// "Flinch" is the camera punch the game adds when *you* take a hit. The offset
+// is produced by the get-hit punch path:
+//   Weapon::ChangePunchAngleByGetHit(multiplier)          -> 0x51181BC (Slot 80)
+//   WeaponFireComponent::ChangePunchAngleByGetHit(...)    -> 0xC14DED4 (Slot 57, base)
+//   WeaponFireComponent_Instant::ChangePunchAngleByGetHit -> 0xC9C0EDC (Slot 57, override)
+// and then fed into the camera by UpdatePunchAngleByGetHit (0xC9BF568).
+// Forcing the incoming multiplier to 0 leaves every timer, cache and decay path
+// in the engine untouched while adding no flinch at all, so turning the toggle
+// back off restores the normal behaviour instantly (even mid-match).
+inline void (*orig_Weapon_ChangePunchAngleByGetHit)(void*, float) = nullptr;
+inline void hook_Weapon_ChangePunchAngleByGetHit(void* instance, float hitPunchAngleMultiplier) {
+    if (instance != nullptr && Config.ExtraMenu.NoFlinch)
+        hitPunchAngleMultiplier = 0.0f;
+    if (orig_Weapon_ChangePunchAngleByGetHit != nullptr)
+        orig_Weapon_ChangePunchAngleByGetHit(instance, hitPunchAngleMultiplier);
+}
+
+inline void (*orig_FireComp_ChangePunchAngleByGetHit)(void*, float) = nullptr;
+inline void hook_FireComp_ChangePunchAngleByGetHit(void* instance, float hitPunchAngleMultiplier) {
+    if (instance != nullptr && Config.ExtraMenu.NoFlinch)
+        hitPunchAngleMultiplier = 0.0f;
+    if (orig_FireComp_ChangePunchAngleByGetHit != nullptr)
+        orig_FireComp_ChangePunchAngleByGetHit(instance, hitPunchAngleMultiplier);
+}
+
+inline void (*orig_Instant_ChangePunchAngleByGetHit)(void*, float) = nullptr;
+inline void hook_Instant_ChangePunchAngleByGetHit(void* instance, float hitPunchAngleMultiplier) {
+    if (instance != nullptr && Config.ExtraMenu.NoFlinch)
+        hitPunchAngleMultiplier = 0.0f;
+    if (orig_Instant_ChangePunchAngleByGetHit != nullptr)
+        orig_Instant_ChangePunchAngleByGetHit(instance, hitPunchAngleMultiplier);
+}
+
+//-- No Scope Drift (hardscope sway)
+// Scoped sniper drift is the weapon's "breathe trembling": once the breath
+// countdown runs out the engine keeps moving the scope by
+//   InitBreatheTrembling (0xC9BE3A4) -> UpdateBreatheTrembling (0xC9BE4C0)
+// driven from PlayBreatheLogic (0xC9BF734). Not driving that chain keeps the
+// trembling position at its initial value, so a hardscope that is held for a
+// long time does not drift. All three are void-returning (no ABI surprises),
+// and every one of them is skipped only while the toggle is on.
+inline void (*orig_InitBreatheTrembling)(void*) = nullptr;
+inline void hook_InitBreatheTrembling(void* instance) {
+    if (Config.ExtraMenu.NoDrift)
+        return;
+    if (orig_InitBreatheTrembling != nullptr)
+        orig_InitBreatheTrembling(instance);
+}
+
+inline void (*orig_UpdateBreatheTrembling)(void*, float) = nullptr;
+inline void hook_UpdateBreatheTrembling(void* instance, float dt) {
+    if (Config.ExtraMenu.NoDrift)
+        return;
+    if (orig_UpdateBreatheTrembling != nullptr)
+        orig_UpdateBreatheTrembling(instance, dt);
+}
+
+inline void (*orig_PlayBreatheLogic)(void*, float) = nullptr;
+inline void hook_PlayBreatheLogic(void* instance, float dt) {
+    if (Config.ExtraMenu.NoDrift)
+        return;
+    if (orig_PlayBreatheLogic != nullptr)
+        orig_PlayBreatheLogic(instance, dt);
+}
+
+//-- No Shake (wires the "No Shake" toggle that was in the menu but had no hook)
+// Pawn::CanAddCameraShakeFromSource() is the engine gate right in front of every
+// camera shake (including the shake that plays when the local player is hit).
+// Returning false suppresses them without touching the shake data or the state
+// machine, so toggling it back on restores shaking on the next hit.
+inline bool (*orig_CanAddCameraShakeFromSource)(void*) = nullptr;
+inline bool hook_CanAddCameraShakeFromSource(void* instance) {
+    if (Config.ExtraMenu.Shake)
+        return false;
+    return orig_CanAddCameraShakeFromSource != nullptr
+               ? orig_CanAddCameraShakeFromSource(instance)
+               : true;
+}
+
 //-- Quick Switch
 inline float (*orig_get_EquipTime)(void* instance) = nullptr;
 inline float get_EquipTime(void* instance) {
@@ -1746,6 +1826,22 @@ inline void InitializeAllHooks() {
 
     //-- Quick Scope
     HOOK_LIB("libunity.so", "0x50EB944", get_AimingTime, orig_get_AimingTime);
+
+    //-- No Hit Flinch (hit punch on the local player's camera)
+    HOOK_LIB("libunity.so", "0x51181BC", hook_Weapon_ChangePunchAngleByGetHit, orig_Weapon_ChangePunchAngleByGetHit);
+    HOOK_LIB("libunity.so", "0xC14DED4", hook_FireComp_ChangePunchAngleByGetHit, orig_FireComp_ChangePunchAngleByGetHit);
+    HOOK_LIB("libunity.so", "0xC9C0EDC", hook_Instant_ChangePunchAngleByGetHit, orig_Instant_ChangePunchAngleByGetHit);
+
+    //-- No Scope Drift (breathe trembling while hardscoped)
+    HOOK_LIB("libunity.so", "0xC9BE3A4", hook_InitBreatheTrembling, orig_InitBreatheTrembling);
+    HOOK_LIB("libunity.so", "0xC9BE4C0", hook_UpdateBreatheTrembling, orig_UpdateBreatheTrembling);
+    HOOK_LIB("libunity.so", "0xC9BF734", hook_PlayBreatheLogic, orig_PlayBreatheLogic);
+
+    //-- No Shake (camera shake gate on Pawn; reuses the menu's existing toggle)
+    HOOK_LIB("libunity.so", "0x5206BB4", hook_CanAddCameraShakeFromSource, orig_CanAddCameraShakeFromSource);
+
+    //-- No Overheat (toggle existed but the hook was left commented out)
+    HOOK_LIB("libunity.so", "0xC14B314", get_AddHotTime, orig_get_AddHotTime);
 
     //-- Quick Switch
     HOOK_LIB("libunity.so", "0x50ED8D4", get_EquipTime, orig_get_EquipTime);

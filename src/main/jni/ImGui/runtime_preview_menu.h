@@ -337,6 +337,8 @@ inline void RenderMemoryTab(float childWidth, float childHeight) {
         custom::Checkbox("No Overheat", &Config.ExtraMenu.Rpd);
         custom::Checkbox("No Parachute", &Config.ExtraMenu.Parachute);
         custom::Checkbox("Anti Flashbang", &Config.ExtraMenu.Flash);
+        custom::Checkbox("No Hit Flinch", &Config.ExtraMenu.NoFlinch);
+        custom::Checkbox("No Scope Drift", &Config.ExtraMenu.NoDrift);
         custom::Checkbox("Firerate", &Config.ExtraMenu.Fire);
         custom::Checkbox("Fast Dive", &Config.ExtraMenu.Diving);
         custom::Checkbox("Fast Reload", &Config.ExtraMenu.Reload);
